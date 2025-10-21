@@ -1,43 +1,44 @@
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
+# --- Node & build artifacts ---
+innet-app/node_modules
+innet-app/.next
+innet-app/out
+innet-app/dist
+innet-app/.vercel
 
-# build outputs
-/.next
-/out
-/dist
+# --- Environment variables ---
+innet-app/.env
+innet-app/.env.local
+innet-app/.env.development.local
+innet-app/.env.test.local
+innet-app/.env.production.local
 
-# environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+# --- Logs & debugging ---
+innet-app/npm-debug.log*
+innet-app/yarn-debug.log*
+innet-app/yarn-error.log*
+innet-app/pnpm-debug.log*
+innet-app/logs
+innet-app/*.log
 
-# editor junk
-.vscode/
-.idea/
+# --- Editors ---
+innet-app/.vscode/
+innet-app/.idea/
 *.swp
 *.swo
 *~
 .DS_Store
 Thumbs.db
 
-# logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-/logs
-*.log
+# --- TypeScript ---
+innet-app/*.tsbuildinfo
 
-# system files
+# --- OS / system junk ---
 *.DS_Store
+.DS_Store?
+ehthumbs.db
+Icon?
+desktop.ini
 
-# type checking
-*.tsbuildinfo
-
-# local data
-/.vercel
-/.envrc
+# --- Misc ---
+innet-app/.pnp
+innet-app/.pnp.js
