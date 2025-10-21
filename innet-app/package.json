@@ -1,0 +1,38 @@
+{
+  "name": "innet-app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "clsx": "^1.2.1",
+    "framer-motion": "^10.12.16",
+    "html5-qrcode": "^2.3.8",
+    "lucide-react": "^0.251.0",
+    "next": "^15.5.6",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-force-graph-2d": "^1.29.0",
+    "react-hook-form": "^7.65.0",
+    "react-qr-code": "^2.0.18",
+    "react-qr-scanner": "^1.0.0-alpha.11",
+    "tailwindcss": "^3.3.2",
+    "three": "^0.180.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.4.8",
+    "@types/react": "^18.2.14",
+    "@types/react-dom": "18.2.6",
+    "@types/uuid": "^11.0.0",
+    "autoprefixer": "^10.4.21",
+    "eslint": "8.49.0",
+    "eslint-config-next": "14.0.0",
+    "postcss": "^8.5.6",
+    "typescript": "^5.3.3"
+  }
+}
