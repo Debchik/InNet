@@ -11,14 +11,13 @@ const buildAnchoredGraphData = (containerWidth = 1000, containerHeight = 1000) =
   const data = buildGraphData('me', loadContacts());
   const contacts = data.nodes.filter((node: any) => node.id !== 'me');
   const contactsCount = contacts.length || 1;
-  
+
   const centerX = containerWidth / 2;
   const centerY = containerHeight / 2;
-  
-  // Calculate radius based on container size
-  const baseRadius = Math.min(containerWidth, containerHeight) * 0.15; // 15% of smallest dimension
-  const step = Math.min(containerWidth, containerHeight) * 0.03; // 3% of smallest dimension
-  const maxRadius = Math.min(containerWidth, containerHeight) * 0.3; // 30% of smallest dimension
+
+  const baseRadius = Math.min(containerWidth, containerHeight) * 0.15;
+  const step = Math.min(containerWidth, containerHeight) * 0.03;
+  const maxRadius = Math.min(containerWidth, containerHeight) * 0.3;
   const radius = Math.min(maxRadius, baseRadius + (contactsCount - 1) * step);
   const contactPositions = new Map<string, { x: number; y: number }>();
 
@@ -32,24 +31,19 @@ const buildAnchoredGraphData = (containerWidth = 1000, containerHeight = 1000) =
   return {
     ...data,
     nodes: data.nodes.map((node: any) => {
-      // Position the main node at the center
       if (node.id === 'me') {
         return {
           ...node,
           x: centerX,
           y: centerY,
           fx: centerX,
-          fy: centerY
+          fy: centerY,
         };
-      }
-      // Position contact nodes in a circle around the center
-      if (node.id === 'me') {
-        return { ...node, fx: 0, fy: 0, x: 0, y: 0 };
       }
 
       const { x, y } = contactPositions.get(node.id) ?? { x: radius, y: 0 };
       return { ...node, fx: x, fy: y, x, y };
-    })
+    }),
   };
 };
 
@@ -60,7 +54,6 @@ export default function GraphPage() {
   const fgRef = useRef<ForceGraphMethods | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Update dimensions when container size changes
   useEffect(() => {
     const updateDimensions = () => {
       if (containerRef.current) {
@@ -68,7 +61,7 @@ export default function GraphPage() {
         setDimensions({ width, height });
       }
     };
-    
+
     updateDimensions();
     window.addEventListener('resize', updateDimensions);
     return () => window.removeEventListener('resize', updateDimensions);
@@ -124,13 +117,13 @@ export default function GraphPage() {
     <Layout>
       <div className="px-4 py-8 max-w-6xl mx-auto">
         <h1 className="text-3xl font-bold mb-6">Моя сеть</h1>
-        <div 
+        <div
           ref={containerRef}
-          className="bg-gray-800 rounded-xl shadow overflow-hidden graph-container" 
+          className="bg-gray-800 rounded-xl shadow overflow-hidden graph-container"
           style={{ height: '500px' }}
         >
           <ForceGraph2D
-            ref={fgRef}
+            ref={fgRef as any}
             graphData={graphData}
             nodeLabel={(node: any) => node.name}
             nodeAutoColorBy="id"
@@ -154,7 +147,12 @@ export default function GraphPage() {
               ctx.fill();
 
               ctx.fillStyle = 'rgba(15,23,42,0.8)';
-              ctx.fillRect(node.x! - textWidth / 2 - padding, node.y! + 12, textWidth + padding * 2, fontSize + padding * 2);
+              ctx.fillRect(
+                node.x! - textWidth / 2 - padding,
+                node.y! + 12,
+                textWidth + padding * 2,
+                fontSize + padding * 2
+              );
 
               ctx.fillStyle = '#F8FAFC';
               ctx.textAlign = 'center';
