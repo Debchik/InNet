@@ -1,0 +1,44 @@
+# --- Normalize line endings ---
+* text=auto
+
+# --- Enforce LF endings for source code ---
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.css text eol=lf
+*.scss text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+
+# --- Treat images & binaries as binary ---
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.svg binary
+*.pdf binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.mp4 binary
+*.mp3 binary
+
+# --- GitHub linguist settings ---
+# Helps GitHub detect project language correctly
+*.ts linguist-language=TypeScript
+*.tsx linguist-language=TypeScript
+*.js linguist-language=JavaScript
+*.jsx linguist-language=JavaScript
+*.css linguist-language=CSS
+*.html linguist-language=HTML
+
+# --- Lock critical configs to LF ---
+.gitattributes text eol=lf
+.gitignore text eol=lf
