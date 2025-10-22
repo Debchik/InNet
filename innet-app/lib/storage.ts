@@ -1,16 +1,15 @@
 import { v4 as uuidv4 } from 'uuid';
 
 /**
- * Types describing the core domain entities for InNet.  
+ * Types describing the core domain entities for InNet.
  * Fact groups contain a collection of individual facts. Contacts
- * reference a user in the network with their own fact selections.  
+ * reference a user in the network with their own fact selections.
  * The graph is derived from contacts; each user has a node and edges
  * represent mutual connections.
  */
 export interface Fact {
   id: string;
-  title: string;
-  description: string;
+  text: string;
 }
 
 export interface FactGroup {
@@ -46,7 +45,8 @@ export function loadFactGroups(): FactGroup[] {
   try {
     const raw = localStorage.getItem(FACT_KEY);
     if (!raw) return [];
-    return JSON.parse(raw) as FactGroup[];
+    const stored = JSON.parse(raw) as any[];
+    return Array.isArray(stored) ? stored.map(normalizeFactGroup) : [];
   } catch (err) {
     console.error('Failed to parse fact groups', err);
     return [];
@@ -112,8 +112,8 @@ export function createFactGroup(name: string, color: string): FactGroup {
 /**
  * Create a new fact within an existing group.
  */
-export function createFact(title: string, description: string): Fact {
-  return { id: uuidv4(), title, description };
+export function createFact(text: string): Fact {
+  return { id: uuidv4(), text };
 }
 
 /**
@@ -129,3 +129,32 @@ export function createContact(name: string, receivedGroups: string[], avatar?: s
 // calls (e.g. GraphQL or REST) and synchronize responses back into
 // your React state. For now, this module isolates all storage
 // concerns making it easier to swap implementations later.
+
+function normalizeFactGroup(raw: any): FactGroup {
+  const id = typeof raw?.id === 'string' ? raw.id : uuidv4();
+  const name = typeof raw?.name === 'string' ? raw.name : 'Без названия';
+  const color = typeof raw?.color === 'string' ? raw.color : '#0D9488';
+  const facts: Fact[] = Array.isArray(raw?.facts)
+    ? raw.facts.map(normalizeFact).filter(Boolean) as Fact[]
+    : [];
+  return { id, name, color, facts };
+}
+
+function normalizeFact(raw: any): Fact | null {
+  if (raw == null) return null;
+  const id = typeof raw.id === 'string' ? raw.id : uuidv4();
+
+  if (typeof raw.text === 'string') {
+    return { id, text: raw.text };
+  }
+
+  const title = typeof raw.title === 'string' ? raw.title.trim() : '';
+  const description = typeof raw.description === 'string' ? raw.description.trim() : '';
+  const combined = [title, description].filter(Boolean).join(description && title ? '\n' : '');
+
+  if (!combined) {
+    return { id, text: '' };
+  }
+
+  return { id, text: combined };
+}
