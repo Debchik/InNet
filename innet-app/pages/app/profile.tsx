@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Layout from '../../components/Layout';
 import { loadUsers, saveUsers } from '../../lib/storage';
+import { syncProfileToSupabase } from '../../lib/profileSync';
 
 type ProfileInfo = {
   id: string;
@@ -290,13 +291,22 @@ export default function ProfilePage() {
         } else {
           localStorage.removeItem('innet_current_user_telegram');
         }
-        if (instagramValue) {
-          localStorage.setItem('innet_current_user_instagram', instagramValue);
-        } else {
-          localStorage.removeItem('innet_current_user_instagram');
-        }
-        window.dispatchEvent(new Event('innet-refresh-notifications'));
+      if (instagramValue) {
+        localStorage.setItem('innet_current_user_instagram', instagramValue);
+      } else {
+        localStorage.removeItem('innet_current_user_instagram');
       }
+      window.dispatchEvent(new Event('innet-refresh-notifications'));
+    }
+
+      void syncProfileToSupabase({
+        email: profile.email,
+        name: profile.name,
+        surname: profile.surname,
+        phone: phoneValue || undefined,
+        telegram: telegramValue,
+        instagram: instagramValue,
+      });
     } catch (error) {
       console.error('Не удалось сохранить контакты', error);
       setContactsFeedback({

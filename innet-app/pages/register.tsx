@@ -12,6 +12,7 @@ import {
   convertFactsToGroups,
   UserAccount,
 } from '../lib/storage';
+import { syncProfileToSupabase } from '../lib/profileSync';
 import { FACT_CATEGORY_CONFIG, FACT_CATEGORY_LABELS } from '../lib/categories';
 
 type StepOneInputs = {
@@ -468,6 +469,12 @@ export default function Register() {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('innet-refresh-notifications'));
     }
+
+    void syncProfileToSupabase({
+      email: user.email,
+      name: user.name,
+      surname: user.surname,
+    });
 
     setIsCompleting(false);
     router.push('/app/qr');

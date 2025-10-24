@@ -67,10 +67,26 @@ start();
 
 
 return () => {
-isMounted = false;
-if (qr) {
-qr.stop().then(() => qr.clear()).catch(() => {});
-}
+  isMounted = false;
+  if (!qr) return;
+  try {
+    const maybePromise = qr.stop();
+    Promise.resolve(maybePromise)
+      .catch(() => undefined)
+      .finally(() => {
+        try {
+          qr.clear();
+        } catch {
+          // ignore cleanup failures
+        }
+      });
+  } catch {
+    try {
+      qr.clear();
+    } catch {
+      /* swallow */
+    }
+  }
 };
 }, [onScan, onError]);
 
