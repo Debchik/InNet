@@ -22,8 +22,9 @@ export default function Home() {
   return (
     <Layout>
       {/* Hero Section */}
-      <section className="flex flex-col-reverse md:flex-row items-center justify-between px-4 py-20 gap-8">
-        <div className="max-w-xl text-center md:text-left">
+      <section className="px-4 py-20">
+  <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 items-center gap-8">
+          <div className="max-w-xl text-center md:text-left">
           <h1 className="text-4xl sm:text-5xl font-extrabold leading-tight mb-4">
             {hero}
           </h1>
@@ -36,6 +37,7 @@ export default function Home() {
         </div>
         <div className="flex justify-center md:justify-end">
           <QRCodeToggler />
+        </div>
         </div>
       </section>
 

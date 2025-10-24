@@ -1,58 +1,133 @@
-'use client';
-import { useEffect, useState } from 'react';
-import QRCode from 'react-qr-code';
-import clsx from 'clsx';
+"use client";
+import { useEffect, useRef, useState } from "react";
+import QRCode from "react-qr-code";
+import clsx from "clsx";
 
 /**
- * Компонент показывает QR-код с циклично меняющимися подписями
- * (например, "Интересы", "Ценности", "Увлечения").
- * QR указывает на временную заглушку — домашнюю страницу.
- * Потом заменишь qrValue на реальный URL профиля.
+ * Modern toggle-bar QR preview.
+ * - Replaces pill labels with animated toggle-bars (knob + bar)
+ * - Each toggle has an independent boolean state
+ * - Every 1–3 seconds a random toggle is chosen and its state is inverted
+ * - When on the toggle glows; when off it is dimmed
  */
-const toggles = [
-  { label: 'Интересы' },
-  { label: 'Ценности' },
-  { label: 'Увлечения' },
+const TOGGLES = [
+  { key: "interests", label: "Интересы" },
+  { key: "values", label: "Ценности" },
+  { key: "hobbies", label: "Увлечения" },
 ];
 
 export default function QRCodeToggler() {
-  const [index, setIndex] = useState(0);
+  // boolean state for each toggle
+  const [states, setStates] = useState<boolean[]>(() => TOGGLES.map(() => false));
+  const timeoutRef = useRef<number | null>(null);
+  const animRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
+  const firstRender = useRef(true);
+  const [qrAnimating, setQrAnimating] = useState(false);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      setIndex((prev) => (prev + 1) % toggles.length);
-    }, 3000);
-    return () => clearInterval(id);
+    mountedRef.current = true;
+
+    function scheduleNext() {
+      // random delay between 1000 and 8000 ms (1..8s)
+      const delay = 1000 + Math.floor(Math.random() * 7000);
+      timeoutRef.current = window.setTimeout(() => {
+        if (!mountedRef.current) return;
+        // pick a random toggle and invert it
+        const idx = Math.floor(Math.random() * TOGGLES.length);
+        setStates((prev) => {
+          const copy = [...prev];
+          copy[idx] = !copy[idx];
+          return copy;
+        });
+        scheduleNext();
+      }, delay);
+    }
+
+    scheduleNext();
+
+    return () => {
+      mountedRef.current = false;
+      if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
+      if (animRef.current) window.clearTimeout(animRef.current);
+    };
   }, []);
 
+  // animate QR blur/diffuse whenever any toggle changes (skip initial mount)
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    // start QR animation
+    setQrAnimating(true);
+    if (animRef.current) window.clearTimeout(animRef.current);
+    animRef.current = window.setTimeout(() => {
+      setQrAnimating(false);
+      animRef.current = null;
+    }, 500);
+    return () => {
+      if (animRef.current) window.clearTimeout(animRef.current);
+    };
+  }, [states]);
+
+  // allow manual toggle via click
+  function toggleAt(i: number) {
+    setStates((prev) => {
+      const copy = [...prev];
+      copy[i] = !copy[i];
+      return copy;
+    });
+  }
+
   // TODO: заменить на реальный URL профиля пользователя
-  const qrValue = '/';
+  const qrValue = "/";
 
   return (
     <div className="flex flex-col items-center">
-      <div className="p-4 bg-gray-800 rounded-2xl shadow-lg transition-transform duration-300 hover:scale-105">
-        <QRCode
-          value={qrValue}
-          fgColor="#0D9488"
-          bgColor="#0F172A"
-          style={{ width: 220, height: 220 }}
-        />
+      <div
+        className={clsx(
+          "p-5 bg-gradient-to-br from-gray-900/60 to-gray-800/40 backdrop-blur-md rounded-3xl shadow-2xl transition-transform duration-300",
+          qrAnimating ? "filter blur-sm opacity-70 scale-95" : "filter-none"
+        )}
+      >
+        <QRCode value={qrValue} fgColor="#0D9488" bgColor="transparent" style={{ width: 232, height: 232 }} />
       </div>
 
-      <div className="flex space-x-2 mt-4">
-        {toggles.map((t, i) => (
-          <span
-            key={t.label}
-            className={clsx(
-              'px-3 py-1 rounded-full text-xs border transition-all duration-300',
-              i === index
-                ? 'bg-primary text-background border-primary shadow-md'
-                : 'bg-gray-700 text-gray-300 border-gray-600'
-            )}
-          >
-            {t.label}
-          </span>
-        ))}
+      <div className="mt-4 text-sm text-gray-300">Чем хотите поделиться сегодня?</div>
+
+      <div className="flex items-center gap-3 mt-3">
+        {TOGGLES.map((t, i) => {
+          const on = states[i];
+          return (
+            <button
+              key={t.key}
+              onClick={() => toggleAt(i)}
+              className="flex items-center gap-2 bg-transparent"
+              aria-pressed={on}
+            >
+              <span className="text-sm font-medium text-gray-100 select-none">{t.label}</span>
+
+              {/* iOS-like Toggle */}
+              <div
+                className={clsx(
+                  "relative w-12 h-8 rounded-full p-1 flex-shrink-0 transition-colors duration-300",
+                  on
+                    ? "bg-gradient-to-r from-primary to-emerald-400 shadow-[0_6px_16px_rgba(13,148,136,0.14)]"
+                    : "bg-gray-700/60"
+                )}
+              >
+                <div
+                  className={clsx(
+                    "w-6 h-6 bg-white rounded-full shadow-sm transform transition-transform duration-300",
+                    on ? "translate-x-4" : "translate-x-0",
+                    on ? "ring-1 ring-primary/60" : ""
+                  )}
+                />
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import Layout from '../components/Layout';
+import { convertFactsToGroups, loadUsers, saveFactGroups } from '../lib/storage';
 
 /**
  * Login page. This simplistic implementation stores a flag in localStorage
@@ -22,11 +23,76 @@ export default function Login() {
       setError('Введите email и пароль');
       return;
     }
-    // Persist pseudo‑auth state in localStorage
+    const users = loadUsers();
+    const user = users.find(
+      (entry) => entry.email.trim().toLowerCase() === email.trim().toLowerCase()
+    );
+
+    if (!user) {
+      setError('Аккаунт с такой почтой не найден. Зарегистрируйтесь.');
+      return;
+    }
+
+    if (user.password !== password) {
+      setError('Неверный пароль. Попробуйте ещё раз.');
+      return;
+    }
+
+    /* if (!user.verified) {
+      setError('Подтвердите почту по ссылке из письма, чтобы войти.');
+      return;
+    } */
+
     if (typeof window !== 'undefined') {
       localStorage.setItem('innet_logged_in', 'true');
+      localStorage.setItem('innet_current_user_id', user.id);
+      localStorage.setItem('innet_current_user_email', user.email);
+      localStorage.setItem('innet_current_user_name', user.name);
+      localStorage.setItem('innet_current_user_categories', JSON.stringify(user.categories));
+      localStorage.setItem('innet_current_user_facts', JSON.stringify(user.factsByCategory));
+      localStorage.setItem('innet_qr_select_all_groups', 'true');
+      localStorage.setItem('innet_current_user_verified', user.verified ? 'true' : 'false');
+      saveFactGroups(convertFactsToGroups(user.factsByCategory));
+
+      if (user.surname) {
+        localStorage.setItem('innet_current_user_surname', user.surname);
+      } else {
+        localStorage.removeItem('innet_current_user_surname');
+      }
+
+      if (user.phone) {
+        localStorage.setItem('innet_current_user_phone', user.phone);
+      } else {
+        localStorage.removeItem('innet_current_user_phone');
+      }
+
+      if (user.telegram) {
+        localStorage.setItem('innet_current_user_telegram', user.telegram);
+      } else {
+        localStorage.removeItem('innet_current_user_telegram');
+      }
+
+      if (user.instagram) {
+        localStorage.setItem('innet_current_user_instagram', user.instagram);
+      } else {
+        localStorage.removeItem('innet_current_user_instagram');
+      }
+
+      if (user.avatar) {
+        localStorage.setItem('innet_current_user_avatar', user.avatar);
+      } else {
+        localStorage.removeItem('innet_current_user_avatar');
+      }
+
+      if (user.avatarType) {
+        localStorage.setItem('innet_current_user_avatar_type', user.avatarType);
+      } else {
+        localStorage.removeItem('innet_current_user_avatar_type');
+      }
+
+      window.dispatchEvent(new Event('innet-auth-refresh'));
     }
-    // Redirect to app
+
     router.push('/app/qr');
   };
 

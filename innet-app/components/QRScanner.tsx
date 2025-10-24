@@ -44,7 +44,18 @@ await qr.start(
 { facingMode: "environment" },
 { fps: 10, qrbox: 240, formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE] },
 (decoded: string) => isMounted && onScan(decoded),
-(err: unknown) => isMounted && onError?.(err)
+(err: unknown) => {
+  if (!isMounted) return;
+  const message = err instanceof Error ? err.message : String(err);
+  if (
+    message.includes('QR code parse error') ||
+    message.includes('NoMultiFormatReaders') ||
+    message.includes('NotFoundException')
+  ) {
+    return;
+  }
+  onError?.(new Error(message));
+}
 );
 } catch (e) {
 onError?.(e);

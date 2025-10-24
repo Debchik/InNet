@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import Layout from '../../components/Layout';
-import { FactGroup, loadFactGroups, saveFactGroups, createFactGroup, createFact } from '../../lib/storage';
+import {
+  FactGroup,
+  FACT_TEXT_LIMIT,
+  loadFactGroups,
+  saveFactGroups,
+  createFactGroup,
+  createFact,
+} from '../../lib/storage';
 
 const COLOR_OPTIONS = [
   { value: '#0D9488', label: 'Бирюзовый' },
@@ -13,6 +20,8 @@ const COLOR_OPTIONS = [
 
 const MAX_GROUPS = 3;
 const MAX_FACTS_PER_GROUP = 5;
+const FACT_LIMIT_MESSAGE =
+  'В этой группе достигнут лимит фактов. Удалите один, чтобы добавить новый.';
 
 type FocusRequest = { groupId: string; factId: string } | null;
 
@@ -43,7 +52,7 @@ export default function FactsPage() {
   const handleAddGroup = () => {
     if (deleteMode) return;
     if (groups.length >= MAX_GROUPS) {
-      setLimitNotice('Достигнут лимит созданных групп фактов.');
+      setLimitNotice('Достигнут лимит созданных групп. Удалите существующую или используйте одну из них.');
       return;
     }
     const trimmedName = newGroupName.trim();
@@ -69,10 +78,10 @@ export default function FactsPage() {
     const targetGroup = groups.find((group) => group.id === groupId);
     if (!targetGroup) return null;
     if (targetGroup.facts.length >= MAX_FACTS_PER_GROUP) {
-      setLimitNotice('В этой группе достигнут лимит в 5 фактов. Удалите один, чтобы добавить новый.');
+      setLimitNotice(FACT_LIMIT_MESSAGE);
       return null;
     }
-    const content = text.trim();
+    const content = text.trim().slice(0, FACT_TEXT_LIMIT);
     if (!content) return null;
 
     let createdId: string | null = null;
@@ -100,9 +109,10 @@ export default function FactsPage() {
       let innerChanged = false;
       const facts = group.facts.map((fact) => {
         if (fact.id !== factId) return fact;
-        if (fact.text === text) return fact;
+        const sanitized = text.trim().slice(0, FACT_TEXT_LIMIT);
+        if (fact.text === sanitized) return fact;
         innerChanged = true;
-        return { ...fact, text };
+        return { ...fact, text: sanitized };
       });
 
       if (!innerChanged) return group;
@@ -252,6 +262,7 @@ export default function FactsPage() {
           {groups.map((group) => {
             const requestFocus = focusRequest?.groupId === group.id ? focusRequest.factId : null;
             const groupMarked = pendingGroupDeletes.has(group.id);
+            const factLimitReached = group.facts.length >= MAX_FACTS_PER_GROUP;
             return (
               <section
                 key={group.id}
@@ -277,6 +288,8 @@ export default function FactsPage() {
                     onCommit={(value) => handleAddFact(group.id, value)}
                     onFocusRequest={(factId) => setFocusRequest({ groupId: group.id, factId })}
                     disabled={deleteMode}
+                    limitReached={factLimitReached}
+                    onLimitNotice={() => setLimitNotice(FACT_LIMIT_MESSAGE)}
                   />
                   {group.facts.length === 0 ? (
                     <p className="text-sm text-gray-400">
@@ -313,11 +326,15 @@ function FactQuickAdd({
   onFocusRequest,
   accentColor,
   disabled,
+  limitReached,
+  onLimitNotice,
 }: {
   onCommit: (value: string) => string | null;
   onFocusRequest: (factId: string) => void;
   accentColor: string;
   disabled: boolean;
+  limitReached: boolean;
+  onLimitNotice: () => void;
 }) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -326,9 +343,48 @@ function FactQuickAdd({
     adjustTextareaHeight(textareaRef.current);
   }, [value]);
 
+  useEffect(() => {
+    if (!limitReached) return;
+    if (value) {
+      setValue('');
+    }
+    textareaRef.current?.blur();
+  }, [limitReached, value]);
+
+  const handleAttemptLimitNotice = useCallback(() => {
+    if (!limitReached) return;
+    onLimitNotice();
+  }, [limitReached, onLimitNotice]);
+
+  const handleMouseDown = (event: React.MouseEvent<HTMLTextAreaElement>) => {
+    if (!limitReached) return;
+    event.preventDefault();
+    handleAttemptLimitNotice();
+  };
+
+  const handleFocus = () => {
+    if (!limitReached) return;
+    handleAttemptLimitNotice();
+    requestAnimationFrame(() => textareaRef.current?.blur());
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!limitReached) return;
+    if (event.key === 'Tab') {
+      return;
+    }
+    event.preventDefault();
+    handleAttemptLimitNotice();
+  };
+
   const handleChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-    if (disabled) return;
-    const nextValue = event.target.value;
+    if (disabled || limitReached) {
+      if (limitReached) {
+        handleAttemptLimitNotice();
+      }
+      return;
+    }
+    const nextValue = event.target.value.slice(0, FACT_TEXT_LIMIT);
     setValue(nextValue);
 
     if (!nextValue.trim()) {
@@ -345,22 +401,28 @@ function FactQuickAdd({
     onFocusRequest(newId);
   };
 
+  const isDisabled = disabled || limitReached;
+
   return (
     <textarea
       ref={textareaRef}
       value={value}
       rows={1}
       onChange={handleChange}
+      maxLength={FACT_TEXT_LIMIT}
+      onMouseDown={handleMouseDown}
+      onFocus={handleFocus}
+      onKeyDown={handleKeyDown}
       placeholder="Нажмите и начните печатать новый факт"
       disabled={disabled}
-      className={`w-full resize-none rounded-md border border-dashed bg-transparent px-3 py-2 text-sm outline-none transition-colors ${
-        disabled
-          ? 'cursor-not-allowed border-gray-700 text-gray-600'
-          : 'border-gray-600 text-gray-300 focus:border-current focus:text-gray-100'
+      readOnly={disabled || limitReached}
+      className={`w-full resize-none rounded-md border border-dashed px-3 py-2 text-sm outline-none transition-colors ${
+        isDisabled
+          ? 'cursor-not-allowed border-gray-700 bg-gray-800/70 text-gray-500 placeholder:text-gray-600'
+          : 'border-gray-600 bg-transparent text-gray-300 focus:border-current focus:text-gray-100'
       }`}
       style={{
-        color: value ? '#F8FAFC' : undefined,
-        borderColor: disabled ? '#475569' : accentColor,
+        borderColor: isDisabled ? '#475569' : accentColor,
       }}
     />
   );
@@ -406,7 +468,8 @@ function EditableFactRow({
   }, [autoFocus, onFocusComplete]);
 
   const handleChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-    onChange(event.target.value);
+    const next = event.target.value.slice(0, FACT_TEXT_LIMIT);
+    onChange(next);
   };
 
   return (
@@ -421,6 +484,7 @@ function EditableFactRow({
         value={value}
         onChange={handleChange}
         rows={1}
+        maxLength={FACT_TEXT_LIMIT}
         readOnly={deleteMode}
         className={`flex-1 resize-none bg-transparent text-sm text-gray-100 outline-none transition-colors ${
           deleteMode ? 'cursor-not-allowed text-gray-400' : 'focus:text-gray-100'

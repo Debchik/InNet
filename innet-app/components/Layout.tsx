@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 
 interface LayoutProps {
@@ -16,6 +16,103 @@ export default function Layout({ children }: LayoutProps) {
   const year = new Date().getFullYear();
   const isAppRoute = router.pathname.startsWith('/app');
   const isLandingHome = router.pathname === '/';
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const checkAuth = () => {
+      const loggedIn = localStorage.getItem('innet_logged_in') === 'true';
+      setIsAuthenticated(loggedIn);
+    };
+
+    const handleStorage = () => checkAuth();
+
+    checkAuth();
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('innet-auth-refresh', handleStorage);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('innet-auth-refresh', handleStorage);
+    };
+  }, []);
+  /* const [notifications, setNotifications] = useState<AppNotification[]>([]);
+
+  useEffect(() => {
+    if (!isAppRoute) {
+      setNotifications([]);
+      return;
+    }
+    if (typeof window === 'undefined') return;
+
+    const loadNotifications = () => {
+      if (typeof window === 'undefined') return;
+      const items: AppNotification[] = [];
+      const emailVerified = localStorage.getItem('innet_current_user_verified') === 'true';
+      const emailDismissed = localStorage.getItem('innet_dismiss_email_notification') === 'true';
+
+      if (!emailVerified && !emailDismissed) {
+        items.push({
+          id: 'email-verification',
+          content: (
+            <span className="text-sm text-gray-100">
+              Подтвердите почту, чтобы разблокировать весь функционал.{' '}
+              <Link href="/app/profile" className="text-primary underline-offset-2 hover:underline">
+                Перейти в профиль
+              </Link>
+            </span>
+          ),
+        });
+      }
+
+      const hasContacts =
+        Boolean(localStorage.getItem('innet_current_user_phone')) ||
+        Boolean(localStorage.getItem('innet_current_user_telegram')) ||
+        Boolean(localStorage.getItem('innet_current_user_instagram'));
+      const contactsDismissed = localStorage.getItem('innet_dismiss_contacts_notification') === 'true';
+
+      if (!hasContacts && !contactsDismissed) {
+        items.push({
+          id: 'contacts',
+          content: (
+            <span className="text-sm text-gray-100">
+              Добавьте телефон и соцсети в{' '}
+              <Link href="/app/profile" className="text-primary underline-offset-2 hover:underline">
+                профиле
+              </Link>, чтобы делиться ими за пару секунд.
+            </span>
+          ),
+        });
+      }
+
+      setNotifications(items);
+    };
+
+    const handleStorage = () => loadNotifications();
+    const handleRefresh = () => loadNotifications();
+
+    loadNotifications();
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('innet-refresh-notifications', handleRefresh);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('innet-refresh-notifications', handleRefresh);
+    };
+  }, [isAppRoute, router.asPath]);
+
+  const dismissNotification = (id: AppNotification['id']) => {
+    setNotifications((prev) => prev.filter((item) => item.id !== id));
+    if (typeof window === 'undefined') return;
+    if (id === 'email-verification') {
+      localStorage.setItem('innet_dismiss_email_notification', 'true');
+    }
+    if (id === 'contacts') {
+      localStorage.setItem('innet_dismiss_contacts_notification', 'true');
+    }
+  }; */
+
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
@@ -38,22 +135,57 @@ export default function Layout({ children }: LayoutProps) {
               <Link href="/app/contacts" className="hover:text-primary">
                 Контакты
               </Link>
+              <Link href="/app/profile" className="hover:text-primary">
+                Мой профиль
+              </Link>
             </nav>
           )}
         </div>
         <div className="flex items-center space-x-4 text-sm">
           {isLandingHome && (
-            <>
-              <Link href="/login" className="hover:text-primary">
-                Войти
+            isAuthenticated ? (
+              <Link
+                href="/app/qr"
+                className="bg-primary text-background px-3 py-1 rounded-md hover:bg-secondary transition-colors"
+              >
+                Личный кабинет
               </Link>
-              <Link href="/register" className="bg-primary text-background px-3 py-1 rounded-md hover:bg-secondary transition-colors">
-                Регистрация
-              </Link>
-            </>
+            ) : (
+              <>
+                <Link href="/login" className="hover:text-primary">
+                  Войти
+                </Link>
+                <Link
+                  href="/register"
+                  className="bg-primary text-background px-3 py-1 rounded-md hover:bg-secondary transition-colors"
+                >
+                  Регистрация
+                </Link>
+              </>
+            )
           )}
         </div>
       </header>
+      {/* {isAppRoute && notifications.length > 0 && (
+        <div className="px-4 pt-4 space-y-3">
+          {notifications.map((notification) => (
+            <div
+              key={notification.id}
+              className="relative flex items-start gap-3 rounded-lg border border-gray-700 bg-gray-800/80 px-4 py-3 text-sm text-gray-200 shadow-sm"
+            >
+              <div className="flex-1">{notification.content}</div>
+              <button
+                type="button"
+                onClick={() => dismissNotification(notification.id)}
+                className="text-gray-400 hover:text-gray-100 transition-colors"
+                aria-label="Скрыть уведомление"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )} */}
       {/* Main content */}
       <main className="flex-1 flex flex-col min-h-0">
         {children}
