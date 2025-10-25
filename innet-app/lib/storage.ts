@@ -87,8 +87,9 @@ export function loadFactGroups(): FactGroup[] {
   try {
     const raw = localStorage.getItem(FACT_KEY);
     if (!raw) return [];
-    const stored = JSON.parse(raw) as any[];
-    return Array.isArray(stored) ? stored.map(normalizeFactGroup) : [];
+    const stored = JSON.parse(raw) as unknown;
+    if (!Array.isArray(stored)) return [];
+    return stored.map((item) => normalizeFactGroup(item));
   } catch (err) {
     console.error('Failed to parse fact groups', err);
     return [];
@@ -113,8 +114,11 @@ export function loadContacts(): Contact[] {
   try {
     const raw = localStorage.getItem(CONTACT_KEY);
     if (!raw) return [];
-    const stored = JSON.parse(raw) as any[];
-    return Array.isArray(stored) ? stored.map(normalizeContact).filter(Boolean) as Contact[] : [];
+    const stored = JSON.parse(raw) as unknown;
+    if (!Array.isArray(stored)) return [];
+    return stored
+      .map((item) => normalizeContact(item))
+      .filter((contact): contact is Contact => contact != null);
   } catch (err) {
     console.error('Failed to parse contacts', err);
     return [];
@@ -260,26 +264,28 @@ export function updateContact(updated: Contact): void {
 // your React state. For now, this module isolates all storage
 // concerns making it easier to swap implementations later.
 
-function normalizeFactGroup(raw: any): FactGroup {
-  const id = typeof raw?.id === 'string' ? raw.id : uuidv4();
-  const name = typeof raw?.name === 'string' ? raw.name : 'Без названия';
-  const color = typeof raw?.color === 'string' ? raw.color : '#0D9488';
-  const facts: Fact[] = Array.isArray(raw?.facts)
-    ? raw.facts.map(normalizeFact).filter(Boolean) as Fact[]
-    : [];
+function normalizeFactGroup(raw: unknown): FactGroup {
+  const record = toRecord(raw) ?? {};
+  const id = isString(record.id) ? record.id : uuidv4();
+  const name = isString(record.name) ? record.name : 'Без названия';
+  const color = isString(record.color) ? record.color : '#0D9488';
+  const factsSource = Array.isArray(record.facts) ? record.facts : [];
+  const facts: Fact[] = factsSource
+    .map((item) => normalizeFact(item))
+    .filter((fact): fact is Fact => fact != null);
   return { id, name, color, facts };
 }
 
-function normalizeFact(raw: any): Fact | null {
-  if (raw == null) return null;
-  const id = typeof raw.id === 'string' ? raw.id : uuidv4();
+function normalizeFact(raw: unknown): Fact | null {
+  const record = toRecord(raw) ?? {};
+  const id = isString(record.id) ? record.id : uuidv4();
 
-  if (typeof raw.text === 'string') {
-    return { id, text: raw.text.trim().slice(0, FACT_TEXT_LIMIT) };
+  if (isString(record.text)) {
+    return { id, text: record.text.trim().slice(0, FACT_TEXT_LIMIT) };
   }
 
-  const title = typeof raw.title === 'string' ? raw.title.trim() : '';
-  const description = typeof raw.description === 'string' ? raw.description.trim() : '';
+  const title = isString(record.title) ? record.title.trim() : '';
+  const description = isString(record.description) ? record.description.trim() : '';
   const combined = [title, description].filter(Boolean).join(description && title ? '\n' : '');
 
   if (!combined) {
@@ -289,56 +295,80 @@ function normalizeFact(raw: any): Fact | null {
   return { id, text: combined.slice(0, FACT_TEXT_LIMIT) };
 }
 
-function normalizeContact(raw: any): Contact | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const groups = Array.isArray(raw.groups)
-    ? raw.groups.map((group: any) => normalizeContactGroup(group))
-    : [];
-  const legacyGroups = Array.isArray(raw.receivedGroups) ? raw.receivedGroups : [];
+function normalizeContact(raw: unknown): Contact | null {
+  const record = toRecord(raw);
+  if (!record) return null;
 
+  const groupsSource = Array.isArray(record.groups) ? record.groups : [];
+  const groups = groupsSource.map((group) => normalizeContactGroup(group));
+
+  const legacyGroups = Array.isArray(record.receivedGroups)
+    ? record.receivedGroups.filter(isString)
+    : [];
+  const notesSource = Array.isArray(record.notes) ? record.notes : [];
+  const notes = notesSource
+    .map((note) => normalizeContactNote(note))
+    .filter((note): note is ContactNote => note != null);
+
+  const remoteId =
+    isString(record.remoteId) ? record.remoteId : isString(record.id) ? record.id : uuidv4();
   return {
-    id: typeof raw.id === 'string' ? raw.id : uuidv4(),
-    remoteId: typeof raw.remoteId === 'string' ? raw.remoteId : (typeof raw.id === 'string' ? raw.id : uuidv4()),
-    name: typeof raw.name === 'string' ? raw.name : 'Без имени',
-    avatar: typeof raw.avatar === 'string' ? raw.avatar : undefined,
-    phone: typeof raw.phone === 'string' ? raw.phone : undefined,
-    telegram: typeof raw.telegram === 'string' ? raw.telegram : undefined,
-    instagram: typeof raw.instagram === 'string' ? raw.instagram : undefined,
-    connectedAt: typeof raw.connectedAt === 'number' ? raw.connectedAt : Date.now(),
-    lastUpdated: typeof raw.lastUpdated === 'number' ? raw.lastUpdated : Date.now(),
+    id: isString(record.id) ? record.id : uuidv4(),
+    remoteId,
+    name: isString(record.name) ? record.name : 'Без имени',
+    avatar: isString(record.avatar) ? record.avatar : undefined,
+    phone: isString(record.phone) ? record.phone : undefined,
+    telegram: isString(record.telegram) ? record.telegram : undefined,
+    instagram: isString(record.instagram) ? record.instagram : undefined,
+    connectedAt: isNumber(record.connectedAt) ? record.connectedAt : Date.now(),
+    lastUpdated: isNumber(record.lastUpdated) ? record.lastUpdated : Date.now(),
     groups: groups.length
       ? groups
-      : legacyGroups.map((gid: string) => ({
+      : legacyGroups.map((gid) => ({
           id: gid,
           name: 'Группа фактов',
           color: '#475569',
           facts: [],
         })),
-    notes: Array.isArray(raw.notes)
-      ? raw.notes
-          .map((note: any) => normalizeContactNote(note))
-          .filter(Boolean) as ContactNote[]
-      : [],
+    notes,
   };
 }
 
-function normalizeContactGroup(raw: any): ContactGroup {
-  const id = typeof raw?.id === 'string' ? raw.id : uuidv4();
-  const name = typeof raw?.name === 'string' ? raw.name : 'Группа фактов';
-  const color = typeof raw?.color === 'string' ? raw.color : '#475569';
-  const facts: Fact[] = Array.isArray(raw?.facts)
-    ? raw.facts.map(normalizeFact).filter(Boolean) as Fact[]
-    : [];
+function normalizeContactGroup(raw: unknown): ContactGroup {
+  const record = toRecord(raw) ?? {};
+  const id = isString(record.id) ? record.id : uuidv4();
+  const name = isString(record.name) ? record.name : 'Группа фактов';
+  const color = isString(record.color) ? record.color : '#475569';
+  const factsSource = Array.isArray(record.facts) ? record.facts : [];
+  const facts: Fact[] = factsSource
+    .map((fact) => normalizeFact(fact))
+    .filter((fact): fact is Fact => fact != null);
   return { id, name, color, facts };
 }
 
-function normalizeContactNote(raw: any): ContactNote | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const text = typeof raw.text === 'string' ? raw.text.slice(0, CONTACT_NOTE_LIMIT) : '';
+function normalizeContactNote(raw: unknown): ContactNote | null {
+  const record = toRecord(raw);
+  if (!record) return null;
+  const text = isString(record.text) ? record.text.slice(0, CONTACT_NOTE_LIMIT) : '';
   if (!text) return null;
   return {
-    id: typeof raw.id === 'string' ? raw.id : uuidv4(),
+    id: isString(record.id) ? record.id : uuidv4(),
     text,
-    createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : Date.now(),
+    createdAt: isNumber(record.createdAt) ? record.createdAt : Date.now(),
   };
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value === 'object' && value !== null) {
+    return value as Record<string, unknown>;
+  }
+  return null;
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string';
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
 }

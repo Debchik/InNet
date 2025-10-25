@@ -1,11 +1,19 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { FormEvent, RefObject } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import QRCode from 'react-qr-code';
 import Layout from '../../components/Layout';
-import { FactGroup, loadFactGroups } from '../../lib/storage';
+import {
+  FactGroup,
+  loadFactGroups,
+  createContact,
+  createContactNote,
+  loadContacts,
+  saveContacts,
+} from '../../lib/storage';
 import {
   generateShareToken,
   getOrCreateProfileId,
@@ -14,6 +22,7 @@ import {
   ShareGroup,
   SHARE_PREFIX,
 } from '../../lib/share';
+import { v4 as uuidv4 } from 'uuid';
 
 const QRScanner = dynamic(() => import('../../components/QRScanner'), { ssr: false });
 
@@ -54,6 +63,7 @@ export default function QRPage() {
   const [shareNonce, setShareNonce] = useState(0);
   const [responseNonce, setResponseNonce] = useState(0);
   const [tokenInput, setTokenInput] = useState('');
+  const [manualModalOpen, setManualModalOpen] = useState(false);
 
   const lastTokenRef = useRef<string>('');
   const lastTokenTsRef = useRef<number>(0);
@@ -282,6 +292,36 @@ export default function QRPage() {
     }
   };
 
+  const handleManualContactCreate = useCallback(
+    (payload: ManualContactPayload) => {
+      const trimmedName = payload.name.trim() || 'Без имени';
+      const contacts = loadContacts();
+      const baseContact = createContact({
+        remoteId: uuidv4(),
+        name: trimmedName,
+        avatar: payload.avatar,
+        phone: payload.phone?.trim() || undefined,
+        telegram: payload.telegram?.trim() || undefined,
+        instagram: payload.instagram?.trim() || undefined,
+        groups: [],
+      });
+
+      if (payload.note.trim()) {
+        baseContact.notes = [createContactNote(payload.note.trim())];
+      }
+
+      saveContacts([baseContact, ...contacts]);
+      setManualModalOpen(false);
+      setScanError(null);
+      setScanMessage(`Контакт «${baseContact.name}» добавлен вручную.`);
+      setLastContactId(baseContact.id);
+      setTimeout(() => {
+        router.push(`/app/contacts/${baseContact.id}`);
+      }, RESPONSE_OVERLAY_CLOSE_DELAY);
+    },
+    [router]
+  );
+
   if (!isReady) {
     return (
       <Layout>
@@ -296,10 +336,19 @@ export default function QRPage() {
     <Layout>
       <div className="mx-auto w-full max-w-4xl px-4 py-8">
         <h1 className="text-3xl font-bold text-slate-100">QR-коды</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          Покажите код с фактами друзьям или отсканируйте их, чтобы сохранить у себя. Все данные
-          остаются на вашем устройстве.
-        </p>
+        <div className="mt-1 flex flex-col gap-3 text-sm text-slate-400 md:flex-row md:items-center md:justify-between">
+          <p>
+            Покажите код с фактами друзьям или отсканируйте их, чтобы сохранить у себя. Все данные
+            остаются на вашем устройстве.
+          </p>
+          <button
+            type="button"
+            onClick={() => setManualModalOpen(true)}
+            className="inline-flex items-center justify-center rounded-full bg-primary px-4 py-2 text-sm font-semibold text-background transition hover:bg-secondary"
+          >
+            Добавить контакт
+          </button>
+        </div>
 
         <div className="mt-6 flex justify-center gap-3">
           <ModeButton active={mode === 'generate'} onClick={() => { setMode('generate'); setShareNonce(Date.now()); }}>
@@ -401,6 +450,12 @@ export default function QRPage() {
           onToggle={handleResponseToggle}
           onClose={closeResponseModal}
           token={responseToken}
+        />
+      )}
+      {manualModalOpen && (
+        <ManualContactModal
+          onClose={() => setManualModalOpen(false)}
+          onCreate={handleManualContactCreate}
         />
       )}
     </Layout>
@@ -704,4 +759,360 @@ function syncSelection(current: string[], source: FactGroup[]): string[] {
     if (!merged.includes(id)) merged.push(id);
   });
   return merged;
+}
+
+type ManualContactPayload = {
+  name: string;
+  phone: string;
+  telegram: string;
+  instagram: string;
+  note: string;
+  avatar: string | undefined;
+};
+
+function ManualContactModal({
+  onClose,
+  onCreate,
+}: {
+  onClose: () => void;
+  onCreate: (payload: ManualContactPayload) => void;
+}) {
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [telegram, setTelegram] = useState('');
+  const [instagram, setInstagram] = useState('');
+  const [note, setNote] = useState('');
+  const [avatar, setAvatar] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  useEffect(() => {
+    return () => {
+      stopCameraStream(streamRef.current);
+    };
+  }, []);
+
+  const generatedAvatar = useMemo(() => generateColorAvatar(name), [name]);
+  const previewAvatar = avatar ?? generatedAvatar;
+
+  const openCamera = async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setCameraError('Камера не поддерживается в этом браузере.');
+      setCameraOpen(true);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'user' },
+        },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      setCameraError(null);
+      setCameraOpen(true);
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Не удалось получить доступ к камере. Проверьте разрешения.';
+      setCameraError(message);
+      setCameraOpen(true);
+    }
+  };
+
+  const closeCamera = () => {
+    stopCameraStream(streamRef.current);
+    streamRef.current = null;
+    setCameraOpen(false);
+  };
+
+  const retryCamera = () => {
+    closeCamera();
+    void openCamera();
+  };
+
+  const captureSelfie = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      setCameraError('Камера ещё не готова. Подождите секунду и попробуйте снова.');
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      setCameraError('Не удалось сделать снимок.');
+      return;
+    }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/png');
+    setAvatar(dataUrl);
+    closeCamera();
+  };
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setError('Укажите имя контакта.');
+      return;
+    }
+    setError(null);
+    onCreate({
+      name: trimmedName,
+      phone,
+      telegram,
+      instagram,
+      note,
+      avatar: previewAvatar,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+      <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-950 p-6 shadow-xl">
+        <div className="flex items-start justify-between gap-4">
+          <h2 className="text-lg font-semibold text-slate-100">Добавить контакт вручную</h2>
+          <button
+            type="button"
+            onClick={() => {
+              closeCamera();
+              onClose();
+            }}
+            className="text-sm text-slate-400 transition hover:text-slate-200"
+          >
+            Закрыть
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="mt-5 grid gap-6 md:grid-cols-[160px,1fr]">
+          <div className="flex flex-col items-center gap-4">
+            <div className="relative flex h-28 w-28 items-center justify-center overflow-hidden rounded-full border border-slate-700 bg-slate-900">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={previewAvatar}
+                alt={name || 'Новый контакт'}
+                className="h-full w-full object-cover"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => void openCamera()}
+              className="w-full rounded-full border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary transition hover:border-primary hover:bg-primary/15"
+            >
+              Сделать селфи
+            </button>
+            <button
+              type="button"
+              onClick={() => setAvatar(undefined)}
+              className="text-xs text-slate-400 transition hover:text-slate-200"
+            >
+              Сбросить фото
+            </button>
+          </div>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="block text-sm text-slate-300">
+                Имя <span className="text-primary">*</span>
+              </label>
+              <input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/40"
+                placeholder="Имя контакта"
+              />
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="block text-sm text-slate-300">Телефон</label>
+                <input
+                  value={phone}
+                  onChange={(event) => setPhone(event.target.value)}
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/40"
+                  placeholder="+7 (999) 123-45-67"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="block text-sm text-slate-300">Telegram</label>
+                <input
+                  value={telegram}
+                  onChange={(event) => setTelegram(event.target.value)}
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/40"
+                  placeholder="@nickname"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="block text-sm text-slate-300">Instagram</label>
+                <input
+                  value={instagram}
+                  onChange={(event) => setInstagram(event.target.value)}
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/40"
+                  placeholder="@username"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="block text-sm text-slate-300">Заметка</label>
+                <textarea
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                  rows={3}
+                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/40"
+                  placeholder="Где познакомились, что обсудили..."
+                />
+              </div>
+            </div>
+            {error && <p className="text-sm text-red-400">{error}</p>}
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  closeCamera();
+                  onClose();
+                }}
+                className="rounded-full border border-slate-700 px-4 py-2 text-sm text-slate-300 transition hover:border-primary hover:text-primary"
+              >
+                Отмена
+              </button>
+              <button
+                type="submit"
+                className="rounded-full bg-primary px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-secondary"
+              >
+                Сохранить контакт
+              </button>
+            </div>
+          </div>
+        </form>
+
+        {cameraOpen && (
+          <CameraOverlay
+            videoRef={videoRef}
+            error={cameraError}
+            onClose={closeCamera}
+            onCapture={captureSelfie}
+            onRetry={retryCamera}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CameraOverlay({
+  videoRef,
+  error,
+  onClose,
+  onCapture,
+  onRetry,
+}: {
+  videoRef: RefObject<HTMLVideoElement>;
+  error: string | null;
+  onClose: () => void;
+  onCapture: () => void;
+  onRetry: () => void;
+}) {
+  const hasError = Boolean(error);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4">
+      <div className="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-6 text-slate-100 shadow-lg">
+        <h3 className="text-lg font-semibold">Сделать селфи</h3>
+        <div className="relative mt-4 overflow-hidden rounded-lg border border-slate-700 bg-black">
+          <video
+            ref={videoRef}
+            className="h-64 w-full object-cover"
+            autoPlay
+            playsInline
+            muted
+          />
+          {hasError && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/80 px-4 py-6 text-center text-sm text-red-300">
+              <p>{error}</p>
+            </div>
+          )}
+        </div>
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          {hasError ? (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md border border-slate-700 px-4 py-2 text-sm text-slate-200 transition hover:border-primary hover:text-primary"
+              >
+                Закрыть
+              </button>
+              <button
+                type="button"
+                onClick={onRetry}
+                className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-secondary"
+              >
+                Попробовать снова
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md border border-slate-700 px-4 py-2 text-sm text-slate-200 transition hover:border-primary hover:text-primary"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={onCapture}
+                className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-secondary"
+              >
+                Сделать снимок
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function stopCameraStream(stream: MediaStream | null) {
+  if (!stream) return;
+  stream.getTracks().forEach((track) => {
+    try {
+      track.stop();
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
+function generateColorAvatar(seed: string): string {
+  const value = seed || 'contact';
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = value.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = Math.abs(hash) % 360;
+  const colorA = `hsl(${hue}, 70%, 55%)`;
+  const colorB = `hsl(${(hue + 40) % 360}, 70%, 45%)`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160">
+    <defs>
+      <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="${colorA}" />
+        <stop offset="100%" stop-color="${colorB}" />
+      </linearGradient>
+    </defs>
+    <rect width="160" height="160" rx="80" ry="80" fill="url(#g)" />
+  </svg>`;
+  return `data:image/svg+xml;base64,${toBase64(svg)}`;
+}
+
+function toBase64(input: string): string {
+  if (typeof window === 'undefined') {
+    return Buffer.from(input, 'utf8').toString('base64');
+  }
+  return window.btoa(input);
 }

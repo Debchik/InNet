@@ -18,8 +18,10 @@ export default function Layout({ children }: LayoutProps) {
   const isAppRoute = router.pathname.startsWith('/app');
   const isLandingHome = router.pathname === '/';
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
+    setHydrated(true);
     if (typeof window === 'undefined') return;
 
     const checkAuth = () => {
@@ -117,15 +119,13 @@ export default function Layout({ children }: LayoutProps) {
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
-      <header className="flex items-center px-4 py-3 border-b border-gray-700 gap-4 relative">
+      <header className="relative flex items-center gap-4 border-b border-gray-700 px-4 py-3">
         <Link href="/" className="text-2xl font-bold text-primary">
           InNet
         </Link>
-        {/* Центр — пустой flex-1 для выравнивания */}
-        <div className="flex-1" />
-        {/* Десктоп-меню */}
+        {/* Центрированное меню на десктопе */}
         {isAppRoute && (
-          <nav className="hidden md:flex space-x-6 text-sm mr-2">
+          <nav className="hidden md:flex space-x-6 text-sm absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
             <Link href="/app/qr" className="hover:text-primary">
               QR
             </Link>
@@ -158,30 +158,30 @@ export default function Layout({ children }: LayoutProps) {
             )}
           </button>
         )}
-        <div className="flex items-center space-x-4 text-sm ml-2">
-          {isLandingHome && (
-            isAuthenticated ? (
+        {isLandingHome && (
+          <div className="ml-auto flex items-center gap-3 text-sm">
+            {hydrated && isAuthenticated ? (
               <Link
                 href="/app/qr"
-                className="bg-primary text-background px-3 py-1 rounded-md hover:bg-secondary transition-colors"
+                className="rounded-full bg-primary px-4 py-2 font-semibold text-background transition hover:bg-secondary"
               >
                 Личный кабинет
               </Link>
             ) : (
               <>
-                <Link href="/login" className="hover:text-primary">
+                <Link href="/login" className="transition hover:text-primary">
                   Войти
                 </Link>
                 <Link
                   href="/register"
-                  className="bg-primary text-background px-3 py-1 rounded-md hover:bg-secondary transition-colors"
+                  className="rounded-full bg-primary px-4 py-2 font-semibold text-background transition hover:bg-secondary"
                 >
                   Регистрация
                 </Link>
               </>
-            )
-          )}
-        </div>
+            )}
+          </div>
+        )}
         {/* Модальное меню для мобильных */}
         {isAppRoute && mobileMenuOpen && (
           <div className="fixed inset-0 z-50 bg-black/70 flex items-start justify-end md:hidden" onClick={() => setMobileMenuOpen(false)}>

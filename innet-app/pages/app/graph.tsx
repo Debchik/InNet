@@ -7,22 +7,31 @@ import {
   loadContacts,
   type GraphData,
 } from '../../lib/storage';
-import type { ForceGraphMethods } from 'react-force-graph-2d';
+import type {
+  ForceGraphMethods,
+  NodeObject,
+  LinkObject,
+} from 'react-force-graph-2d';
 
-const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
+const ForceGraph2D = dynamic(
+  () => import('react-force-graph-2d').then((mod) => mod.default),
+  { ssr: false }
+) as unknown as typeof import('react-force-graph-2d').default;
 const SINGLE_NODE_ZOOM = 4.2;
 
-type PositionedGraph = GraphData & {
-  nodes: Array<
-    GraphData['nodes'][number] & {
-      x?: number;
-      y?: number;
-      fx?: number;
-      fy?: number;
-    }
-  >;
+type PositionedNode = GraphData['nodes'][number] & {
+  x?: number;
+  y?: number;
+  fx?: number;
+  fy?: number;
 };
 
+type PositionedGraph = GraphData & {
+  nodes: PositionedNode[];
+};
+
+type GraphNode = NodeObject<PositionedNode>;
+type GraphLink = LinkObject<PositionedNode, GraphData['links'][number]>;
 function layoutGraph(data: GraphData, width: number, height: number): PositionedGraph {
   const rawNodes = data.nodes ?? [];
   if (!rawNodes.length) {
@@ -79,7 +88,7 @@ export default function GraphPage() {
     links: [],
   }));
   const containerRef = useRef<HTMLDivElement>(null);
-  const fgRef = useRef<ForceGraphMethods>();
+  const fgRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(undefined);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
   const refreshGraph = useCallback(() => {
@@ -126,42 +135,8 @@ export default function GraphPage() {
     return () => observer.disconnect();
   }, []);
 
-  const focusGraph = useCallback(() => {
-    const api = fgRef.current as unknown as {
-      centerAt?: (x: number, y: number, ms?: number) => void;
-      zoom?: (k: number, ms?: number) => void;
-      zoomToFit?: (ms?: number, padding?: number) => void;
-      graphData?: () => GraphData & { nodes: Array<{ x?: number; y?: number }> };
-    } | null;
-
-    if (!api || !dimensions.width || !dimensions.height) return;
-
-    const nodes = api.graphData?.().nodes ?? [];
-    if (!nodes.length) return;
-
-    if (nodes.length === 1) {
-      const node = nodes[0];
-      const x = node.x ?? 0;
-      const y = node.y ?? 0;
-      api.centerAt?.(x, y, 600);
-      api.zoom?.(SINGLE_NODE_ZOOM, 600);
-      return;
-    }
-
-    const padding = Math.min(dimensions.width, dimensions.height) * 0.08;
-    api.zoomToFit?.(800, padding);
-  }, [dimensions.height, dimensions.width]);
-
-  useEffect(() => {
-    if (!graphData.nodes.length || graphData.nodes.length <= 1) return;
-    const timeout = setTimeout(() => {
-      focusGraph();
-    }, 250);
-    return () => clearTimeout(timeout);
-  }, [graphData, focusGraph]);
-
   const handleNodeClick = useCallback(
-    (node: { id?: string | number }) => {
+    (node: GraphNode) => {
       const nodeId = typeof node.id === 'number' ? String(node.id) : node.id;
       if (!nodeId || nodeId === 'me') return;
       router.push(`/app/contacts/${nodeId}`);
@@ -176,6 +151,34 @@ export default function GraphPage() {
     [graphData, width, height]
   );
   const onlyRoot = positionedGraph.nodes.length <= 1;
+
+  const focusGraph = useCallback(() => {
+    const api = fgRef.current;
+    if (!api || !dimensions.width || !dimensions.height) return;
+
+    const nodes = positionedGraph.nodes ?? [];
+    if (!nodes.length) return;
+
+    if (nodes.length === 1) {
+      const node = nodes[0];
+      const x = node.x ?? 0;
+      const y = node.y ?? 0;
+      api.centerAt?.(x, y, 600);
+      api.zoom?.(SINGLE_NODE_ZOOM, 600);
+      return;
+    }
+
+    const padding = Math.min(dimensions.width, dimensions.height) * 0.08;
+    api.zoomToFit?.(800, padding);
+  }, [dimensions.height, dimensions.width, positionedGraph]);
+
+  useEffect(() => {
+    if (!graphData.nodes.length || graphData.nodes.length <= 1) return;
+    const timeout = setTimeout(() => {
+      focusGraph();
+    }, 250);
+    return () => clearTimeout(timeout);
+  }, [graphData, focusGraph]);
 
   return (
     <Layout>
@@ -193,7 +196,7 @@ export default function GraphPage() {
             <EmptyState />
           ) : (
             <ForceGraph2D
-              ref={fgRef as any}
+              ref={fgRef}
               width={width}
               height={height}
               backgroundColor="#0B1120"
@@ -206,13 +209,14 @@ export default function GraphPage() {
               linkDirectionalParticles={0}
               nodeRelSize={6}
               enableZoomInteraction
-              nodeLabel={(node: any) => node.name}
-              nodeCanvasObject={(node: any, ctx, globalScale) => {
+              nodeLabel={(node: GraphNode) => node.name ?? ''}
+              nodeCanvasObject={(node: GraphNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
                 const isRoot = node.id === 'me';
                 const radius = isRoot ? 18 : 12;
                 const color = isRoot ? '#38BDF8' : '#818CF8';
                 const halo = isRoot ? '#0EA5E9' : '#312E81';
 
+                ctx.save();
                 ctx.beginPath();
                 ctx.arc(node.x ?? 0, node.y ?? 0, radius + 3, 0, 2 * Math.PI, false);
                 ctx.fillStyle = halo;
@@ -242,6 +246,7 @@ export default function GraphPage() {
 
                 ctx.fillStyle = '#F8FAFC';
                 ctx.fillText(label, node.x ?? 0, labelY + paddingY);
+                ctx.restore();
               }}
             />
           )}

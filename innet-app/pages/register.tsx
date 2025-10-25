@@ -191,7 +191,8 @@ export default function Register() {
     setSelectedCategories((prev) => {
       if (prev.includes(categoryId)) {
         setFactsByCategory((current) => {
-          const { [categoryId]: _removed, ...rest } = current;
+          const rest = { ...current };
+          delete rest[categoryId];
           return rest;
         });
         if (focusRequest?.categoryId === categoryId) {
@@ -250,7 +251,8 @@ export default function Register() {
       const existing = prev[categoryId] ?? [];
       const updated = existing.filter((fact) => fact.id !== factId);
       if (updated.length === 0) {
-        const { [categoryId]: _removed, ...rest } = prev;
+        const rest = { ...prev };
+        delete rest[categoryId];
         return rest;
       }
       return { ...prev, [categoryId]: updated };
@@ -420,14 +422,15 @@ export default function Register() {
     setStepTwoErrors([]);
     setFactLimitMessage(null);
 
-    /* try {
-      const result = await sendVerificationEmail(user.email, user.name || 'InNet пользователь');
-      if (result?.previewUrl) {
-        console.info('[send-confirmation] Preview URL:', result.previewUrl);
-      }
-    } catch (error) {
-      console.error('Не удалось отправить код подтверждения', error);
-    } */
+    void sendVerificationEmail(user.email, user.name || 'InNet пользователь')
+      .then((result) => {
+        if (result?.previewUrl) {
+          console.info('[send-confirmation] Preview URL:', result.previewUrl);
+        }
+      })
+      .catch((error) => {
+        console.error('Не удалось отправить код подтверждения', error);
+      });
 
     if (typeof window !== 'undefined') {
       localStorage.setItem('innet_logged_in', 'true');
@@ -589,6 +592,7 @@ export default function Register() {
                   {avatar.type === 'upload' && avatar.value && (
                     <div className="flex items-center gap-3 mt-2">
                       <div className="w-16 h-16 rounded-full overflow-hidden border border-gray-600">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={avatar.value} alt="Загруженный аватар" className="w-full h-full object-cover" />
                       </div>
                       <button

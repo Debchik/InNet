@@ -1,10 +1,25 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import type {
+  Html5Qrcode as Html5QrcodeType,
+  Html5QrcodeSupportedFormats,
+  Html5QrcodeCameraScanConfig,
+} from "html5-qrcode";
 
 export type QRScannerProps = {
   onScan: (decodedText: string) => void;
   onError?: (error: unknown) => void;
+};
+
+type Html5QrcodeModule = typeof import("html5-qrcode");
+
+type ScannerConfig = Html5QrcodeCameraScanConfig & {
+  experimentalFeatures?: {
+    useBarCodeDetectorIfSupported?: boolean;
+  };
+  rememberLastUsedCamera?: boolean;
+  formatsToSupport?: Html5QrcodeSupportedFormats[];
 };
 
 export default function QRScanner({ onScan, onError }: QRScannerProps) {
@@ -22,7 +37,7 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
   }, [onError]);
 
   useEffect(() => {
-    let qr: any;
+    let qr: Html5QrcodeType | null = null;
     let isMounted = true;
 
     const startScanner = async () => {
@@ -39,20 +54,15 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
 
       startedRef.current = true;
       try {
-        const mod = await import("html5-qrcode");
-        const { Html5Qrcode, Html5QrcodeSupportedFormats } =
-          mod as unknown as {
-            Html5Qrcode: any;
-            Html5QrcodeSupportedFormats?: Record<string, number>;
-            Html5QrcodeScanType?: Record<string, number>;
-          };
+        const mod: Html5QrcodeModule = await import("html5-qrcode");
+        const { Html5Qrcode, Html5QrcodeSupportedFormats } = mod;
 
         if (!Html5Qrcode) {
           throw new Error("html5-qrcode не удалось загрузить. Обновите страницу.");
         }
 
         qr = new Html5Qrcode("reader");
-        const config: Record<string, unknown> = {
+        const config: ScannerConfig = {
           fps: 10,
           rememberLastUsedCamera: true,
           experimentalFeatures: {
@@ -87,24 +97,37 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
           onErrorRef.current?.(new Error(message));
         };
 
-        let lastStartError: unknown = null;
+        let lastStartError: Error | null = null;
+
+        const toError = (value: unknown): Error => {
+          if (value instanceof Error) return value;
+          if (typeof value === "string") return new Error(value);
+          if (value && typeof (value as { message?: unknown }).message === "string") {
+            return new Error(String((value as { message?: unknown }).message));
+          }
+          return new Error("Не удалось запустить камеру. Проверьте разрешения и попробуйте снова.");
+        };
 
         const attemptStart = async (constraint: MediaTrackConstraints | string) => {
+          if (!qr) {
+            lastStartError = new Error("Сканер ещё не готов к запуску.");
+            return false;
+          }
           try {
             await qr.start(constraint, config, successHandler, errorHandler);
             runningRef.current = true;
             return true;
           } catch (err) {
-            lastStartError = err;
+            lastStartError = toError(err);
             return false;
           }
         };
 
         const tryCameraStart = async () => {
           const candidates: Array<MediaTrackConstraints | string> = [
-            { facingMode: { ideal: "environment" } },
             { facingMode: "environment" },
             { facingMode: { exact: "environment" } },
+            { facingMode: "user" },
           ];
 
           for (const candidate of candidates) {
@@ -139,12 +162,10 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
 
         const started = await tryCameraStart();
         if (!started) {
-          if (lastStartError instanceof Error) {
-            throw lastStartError;
-          }
-          throw new Error(
-            "Не удалось запустить камеру. Проверьте разрешения и попробуйте снова."
-          );
+          throw lastStartError
+            ?? new Error(
+              "Не удалось запустить камеру. Проверьте разрешения и попробуйте снова."
+            );
         }
       } catch (error) {
         startedRef.current = false;
@@ -171,23 +192,23 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
       isMounted = false;
       startedRef.current = false;
       document.removeEventListener("visibilitychange", handleVisibility);
-      if (!qr || !runningRef.current) return;
-
+      const currentQr = qr;
+      if (!currentQr || !runningRef.current) return;
       runningRef.current = false;
       try {
-        const maybePromise = qr.stop();
+        const maybePromise = currentQr.stop();
         Promise.resolve(maybePromise)
           .catch(() => undefined)
           .finally(() => {
             try {
-              qr.clear();
+              currentQr.clear();
             } catch {
               /* ignore */
             }
           });
       } catch {
         try {
-          qr.clear();
+          currentQr.clear();
         } catch {
           /* ignore */
         }

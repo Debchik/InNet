@@ -80,8 +80,8 @@ export default function QRCodeToggler() {
     });
   }
 
-  // TODO: заменить на реальный URL профиля пользователя
-  const qrValue = "/";
+  // QR-код на главной указывает на лендинг
+  const qrValue = "https://innet-lac.vercel.app/";
 
   return (
     <div className="flex flex-col items-center">

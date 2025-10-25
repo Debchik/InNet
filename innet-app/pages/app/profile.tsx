@@ -348,6 +348,7 @@ export default function ProfilePage() {
               <div className="relative">
                 <div className="w-28 h-28 rounded-full overflow-hidden border-4 border-gray-700 flex items-center justify-center">
                   {profile.avatarType === 'upload' && profile.avatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={profile.avatar}
                       alt="Аватар"

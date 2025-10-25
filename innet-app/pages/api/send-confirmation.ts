@@ -1,9 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import nodemailer, { Transporter } from 'nodemailer';
-import {
-  createVerificationCode,
-  getVerificationEntry,
-} from '../../lib/server/verification-store';
+import { createVerificationCode } from '../../lib/server/verification-store';
 
 type ResponseData =
   | { ok: true; previewUrl?: string; message?: string }

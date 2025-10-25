@@ -2,7 +2,15 @@ import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import Layout from '../components/Layout';
 import QRCodeToggler from '../components/QRCodeToggler';
-import { heroSlogans, ctaSlogans } from '../utils/slogans';
+import { ctaSlogans } from '../utils/slogans';
+
+const HERO_PHRASES = [
+  'Будешь помнить завтра',
+  'Будешь помнить через неделю',
+  'Будешь помнить через месяц',
+  'Будешь помнить через год',
+  'Не забудешь никогда',
+] as const;
 
 /**
  * Landing page for InNet. This page introduces the project, displays
@@ -13,82 +21,69 @@ export default function Home() {
   const [cta, setCta] = useState(ctaSlogans[0]);
 
   // Анимация динамического текста
-  const phrases = [
-    'Будешь помнить завтра',
-    'будешь помнить через неделю',
-    'будешь помнить через месяц',
-    'будешь помнить через год',
-    'не забудешь никогда',
-  ];
+  const phrases = HERO_PHRASES;
   const [phraseIndex, setPhraseIndex] = useState(0);
   const [displayed, setDisplayed] = useState('');
-  const [erasing, setErasing] = useState(false);
-  const [animating, setAnimating] = useState(false);
-  const prevPhraseRef = useRef(phrases[0]);
+  const [phase, setPhase] = useState<'typing' | 'pausing' | 'erasing'>('typing');
+  const prevPhraseRef = useRef<string>(phrases[0]);
 
   useEffect(() => {
     setCta(ctaSlogans[Math.floor(Math.random() * ctaSlogans.length)]);
   }, []);
 
-  // Анимация набора/стирания текста
+
+  // Основная анимация текста (печать/стирание/пауза)
   useEffect(() => {
     let timeout: NodeJS.Timeout;
     const current = phrases[phraseIndex];
-    const prev = prevPhraseRef.current;
 
-    // Найти общую часть (префикс)
-    let commonPrefix = '';
-    for (let i = 0; i < Math.min(current.length, prev.length); i++) {
-      if (current[i] === prev[i]) {
-        commonPrefix += current[i];
+    if (phase === 'typing') {
+      if (displayed.length < current.length) {
+        timeout = setTimeout(() => {
+          setDisplayed(current.slice(0, displayed.length + 1));
+        }, 36);
       } else {
-        break;
+        timeout = setTimeout(() => setPhase('pausing'), 2000);
       }
-    }
-
-    // Если только концовка меняется — стираем/печатаем только её
-    const eraseTo = commonPrefix.length;
-    if (!animating) {
-      setAnimating(true);
-      if (displayed !== prev) {
-        setDisplayed(prev);
-        return;
+    } else if (phase === 'pausing') {
+      timeout = setTimeout(() => {
+        setPhase('erasing');
+      }, 200);
+    } else if (phase === 'erasing') {
+      // Если следующая фраза начинается с того же префикса — стираем только до него, иначе полностью
+      const nextIndex = (phraseIndex + 1) % phrases.length;
+      const next = phrases[nextIndex];
+      let nextPrefix = '';
+      for (let i = 0; i < Math.min(current.length, next.length); i++) {
+        if (current[i].toLowerCase() === next[i].toLowerCase()) {
+          nextPrefix += current[i];
+        } else {
+          break;
+        }
       }
-    }
-
-    if (!erasing && displayed.length > eraseTo) {
-      // Стираем до общей части
-      timeout = setTimeout(() => {
-        setDisplayed(displayed.slice(0, -1));
-      }, 24);
-      setErasing(true);
-    } else if (displayed.length < current.length) {
-      // Печатаем дальше
-      timeout = setTimeout(() => {
-        setDisplayed(current.slice(0, displayed.length + 1));
-      }, 36);
-      setErasing(false);
-    } else {
-      // Пауза на фразе (максимум 2 секунды)
-      timeout = setTimeout(() => {
+      const eraseTo = nextPrefix.length;
+      if (displayed.length > eraseTo) {
+        timeout = setTimeout(() => {
+          setDisplayed(displayed.slice(0, -1));
+        }, 24);
+      } else {
+        // Переходим к следующей фразе
         prevPhraseRef.current = current;
         setPhraseIndex((i) => (i + 1) % phrases.length);
-        setErasing(false);
-        setAnimating(false);
-      }, 2000);
+        setPhase('typing');
+      }
     }
     return () => clearTimeout(timeout);
-    // eslint-disable-next-line
-  }, [displayed, phraseIndex, erasing, animating]);
+  }, [displayed, phraseIndex, phase, phrases]);
 
   return (
     <Layout>
       {/* Hero Section */}
       <section className="px-4 py-20">
-  <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 items-center gap-8">
+      <div className="max-w-5xl mx-auto grid grid-cols-1 gap-8 md:grid-cols-2 md:items-center">
           <div className="max-w-xl text-center md:text-left">
           <h1 className="text-4xl sm:text-5xl font-extrabold leading-tight mb-4">
-            Добавь в сетку.
+            Добавь в сетку!
           </h1>
           <div className="text-2xl sm:text-3xl font-semibold mb-6 min-h-[2.5em] h-[2.5em] flex items-end justify-center md:justify-start">
           <span className="transition-colors duration-300 text-white">{displayed}</span>
@@ -98,14 +93,17 @@ export default function Home() {
             InNet — это ваш мост к новым знакомствам. Создавайте персонализированные QR‑коды, делитесь фактами о себе и строите сеть связей, которая останется с вами навсегда.
           </p>
 
-          <Link href="/register" className="inline-block bg-primary text-background px-6 py-3 rounded-md text-lg font-semibold shadow hover:bg-secondary transition-colors">
-              {cta}
+          <Link
+            href="/register"
+            className="inline-block rounded-md bg-primary px-6 py-3 text-lg font-semibold text-background shadow transition-colors hover:bg-secondary"
+          >
+            {cta}
           </Link>
         </div>
         <div className="flex justify-center md:justify-end">
           <QRCodeToggler />
         </div>
-        </div>
+      </div>
       </section>
 
       {/* How It Works Section */}
