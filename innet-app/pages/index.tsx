@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import Layout from '../components/Layout';
 import QRCodeToggler from '../components/QRCodeToggler';
@@ -10,14 +10,76 @@ import { heroSlogans, ctaSlogans } from '../utils/slogans';
  * Each block ends with a call-to-action inviting users to register.
  */
 export default function Home() {
-  const [hero, setHero] = useState(heroSlogans[0]);
   const [cta, setCta] = useState(ctaSlogans[0]);
 
+  // Анимация динамического текста
+  const phrases = [
+    'Будешь помнить завтра',
+    'будешь помнить через неделю',
+    'будешь помнить через месяц',
+    'будешь помнить через год',
+    'не забудешь никогда',
+  ];
+  const [phraseIndex, setPhraseIndex] = useState(0);
+  const [displayed, setDisplayed] = useState('');
+  const [erasing, setErasing] = useState(false);
+  const [animating, setAnimating] = useState(false);
+  const prevPhraseRef = useRef(phrases[0]);
+
   useEffect(() => {
-    // randomize slogans on each mount
-    setHero(heroSlogans[Math.floor(Math.random() * heroSlogans.length)]);
     setCta(ctaSlogans[Math.floor(Math.random() * ctaSlogans.length)]);
   }, []);
+
+  // Анимация набора/стирания текста
+  useEffect(() => {
+    let timeout: NodeJS.Timeout;
+    const current = phrases[phraseIndex];
+    const prev = prevPhraseRef.current;
+
+    // Найти общую часть (префикс)
+    let commonPrefix = '';
+    for (let i = 0; i < Math.min(current.length, prev.length); i++) {
+      if (current[i] === prev[i]) {
+        commonPrefix += current[i];
+      } else {
+        break;
+      }
+    }
+
+    // Если только концовка меняется — стираем/печатаем только её
+    const eraseTo = commonPrefix.length;
+    if (!animating) {
+      setAnimating(true);
+      if (displayed !== prev) {
+        setDisplayed(prev);
+        return;
+      }
+    }
+
+    if (!erasing && displayed.length > eraseTo) {
+      // Стираем до общей части
+      timeout = setTimeout(() => {
+        setDisplayed(displayed.slice(0, -1));
+      }, 24);
+      setErasing(true);
+    } else if (displayed.length < current.length) {
+      // Печатаем дальше
+      timeout = setTimeout(() => {
+        setDisplayed(current.slice(0, displayed.length + 1));
+      }, 36);
+      setErasing(false);
+    } else {
+      // Пауза на фразе (максимум 2 секунды)
+      timeout = setTimeout(() => {
+        prevPhraseRef.current = current;
+        setPhraseIndex((i) => (i + 1) % phrases.length);
+        setErasing(false);
+        setAnimating(false);
+      }, 2000);
+    }
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line
+  }, [displayed, phraseIndex, erasing, animating]);
 
   return (
     <Layout>
@@ -26,11 +88,16 @@ export default function Home() {
   <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 items-center gap-8">
           <div className="max-w-xl text-center md:text-left">
           <h1 className="text-4xl sm:text-5xl font-extrabold leading-tight mb-4">
-            {hero}
+            Добавь в сетку.
           </h1>
+          <div className="text-2xl sm:text-3xl font-semibold mb-6 min-h-[2.5em] h-[2.5em] flex items-end justify-center md:justify-start">
+          <span className="transition-colors duration-300 text-white">{displayed}</span>
+          <span className="w-px h-[1.2em] ml-1 bg-primary animate-blink rounded-sm" style={{display:'inline-block'}} />
+          </div>
           <p className="text-lg text-gray-300 mb-8">
             InNet — это ваш мост к новым знакомствам. Создавайте персонализированные QR‑коды, делитесь фактами о себе и строите сеть связей, которая останется с вами навсегда.
           </p>
+
           <Link href="/register" className="inline-block bg-primary text-background px-6 py-3 rounded-md text-lg font-semibold shadow hover:bg-secondary transition-colors">
               {cta}
           </Link>

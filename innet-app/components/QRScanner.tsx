@@ -10,6 +10,16 @@ export type QRScannerProps = {
 export default function QRScanner({ onScan, onError }: QRScannerProps) {
   const startedRef = useRef(false);
   const runningRef = useRef(false);
+  const onScanRef = useRef(onScan);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onScanRef.current = onScan;
+  }, [onScan]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
 
   useEffect(() => {
     let qr: any;
@@ -19,7 +29,7 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
       if (startedRef.current) return;
       if (typeof window === "undefined") return;
       if (!navigator?.mediaDevices?.getUserMedia) {
-        onError?.(
+        onErrorRef.current?.(
           new Error(
             "Браузер не поддерживает камеру или соединение не защищено (нужен HTTPS)."
           )
@@ -30,10 +40,12 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
       startedRef.current = true;
       try {
         const mod = await import("html5-qrcode");
-        const { Html5Qrcode, Html5QrcodeSupportedFormats } = mod as unknown as {
-          Html5Qrcode: new (elementId: string) => any;
-          Html5QrcodeSupportedFormats?: Record<string, number>;
-        };
+        const { Html5Qrcode, Html5QrcodeSupportedFormats } =
+          mod as unknown as {
+            Html5Qrcode: any;
+            Html5QrcodeSupportedFormats?: Record<string, number>;
+            Html5QrcodeScanType?: Record<string, number>;
+          };
 
         if (!Html5Qrcode) {
           throw new Error("html5-qrcode не удалось загрузить. Обновите страницу.");
@@ -43,6 +55,9 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
         const config: Record<string, unknown> = {
           fps: 10,
           rememberLastUsedCamera: true,
+          experimentalFeatures: {
+            useBarCodeDetectorIfSupported: true,
+          },
         };
 
         if (Html5QrcodeSupportedFormats?.QR_CODE != null) {
@@ -52,32 +67,92 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
         const minDimension = Math.min(window.innerWidth, window.innerHeight);
         config.qrbox = Math.max(200, Math.floor(minDimension * 0.6));
 
-        await qr.start(
-          { facingMode: { exact: "environment" } },
-          config,
-          (decoded: string) => {
-            if (!isMounted) return;
-            if (decoded && typeof decoded === 'string') {
-              onScan(decoded);
-            }
-          },
-          (err: unknown) => {
-            if (!isMounted) return;
-            const message = err instanceof Error ? err.message : String(err);
-            if (
-              message.includes("QR code parse error") ||
-              message.includes("NoMultiFormatReaders") ||
-              message.includes("NotFoundException")
-            ) {
-              return;
-            }
-            onError?.(new Error(message));
+        const successHandler = (decoded: string) => {
+          if (!isMounted) return;
+          if (decoded && typeof decoded === "string") {
+            onScanRef.current?.(decoded.trim());
           }
-        );
-        runningRef.current = true;
+        };
+
+        const errorHandler = (err: unknown) => {
+          if (!isMounted) return;
+          const message = err instanceof Error ? err.message : String(err);
+          if (
+            message.includes("QR code parse error") ||
+            message.includes("NoMultiFormatReaders") ||
+            message.includes("NotFoundException")
+          ) {
+            return;
+          }
+          onErrorRef.current?.(new Error(message));
+        };
+
+        let lastStartError: unknown = null;
+
+        const attemptStart = async (constraint: MediaTrackConstraints | string) => {
+          try {
+            await qr.start(constraint, config, successHandler, errorHandler);
+            runningRef.current = true;
+            return true;
+          } catch (err) {
+            lastStartError = err;
+            return false;
+          }
+        };
+
+        const tryCameraStart = async () => {
+          const candidates: Array<MediaTrackConstraints | string> = [
+            { facingMode: { ideal: "environment" } },
+            { facingMode: "environment" },
+            { facingMode: { exact: "environment" } },
+          ];
+
+          for (const candidate of candidates) {
+            const started = await attemptStart(candidate);
+            if (started) {
+              return true;
+            }
+          }
+
+          if (typeof Html5Qrcode.getCameras === "function") {
+            try {
+              const cameras = await Html5Qrcode.getCameras();
+              if (Array.isArray(cameras) && cameras.length > 0) {
+                const preferred =
+                  cameras.find((camera) =>
+                    /back|rear|environment/i.test(camera.label ?? "")
+                  ) ?? cameras[0];
+                if (preferred.id) {
+                  const started = await attemptStart(preferred.id);
+                  if (started) {
+                    return true;
+                  }
+                }
+              }
+            } catch {
+              /* ignore and fallthrough */
+            }
+          }
+
+          return false;
+        };
+
+        const started = await tryCameraStart();
+        if (!started) {
+          if (lastStartError instanceof Error) {
+            throw lastStartError;
+          }
+          throw new Error(
+            "Не удалось запустить камеру. Проверьте разрешения и попробуйте снова."
+          );
+        }
       } catch (error) {
         startedRef.current = false;
-        onError?.(error);
+        onErrorRef.current?.(
+          error instanceof Error
+            ? error
+            : new Error("Не удалось запустить сканер QR-кодов.")
+        );
       }
     };
 
@@ -95,6 +170,7 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
     return () => {
       isMounted = false;
       startedRef.current = false;
+      document.removeEventListener("visibilitychange", handleVisibility);
       if (!qr || !runningRef.current) return;
 
       runningRef.current = false;
@@ -116,9 +192,8 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
           /* ignore */
         }
       }
-      document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [onScan, onError]);
+  }, []);
 
   return (
     <div
