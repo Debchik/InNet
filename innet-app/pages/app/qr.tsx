@@ -36,7 +36,7 @@ const PROFILE_STORAGE_KEYS = [
 ];
 
 export default function QRPage() {
-  const [groupsExpanded, setGroupsExpanded] = useState(false); // для мобильного режима
+  // Удаляем groupsExpanded, группы всегда видны полностью
   const router = useRouter();
   const [groups, setGroups] = useState<FactGroup[]>([]);
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
@@ -327,35 +327,10 @@ export default function QRPage() {
             </div>
 
             <div className="w-full space-y-3">
-              <div className="flex items-center justify-center gap-2 sm:justify-center">
-                <h2 className="text-center text-lg font-semibold text-slate-100 flex-1">
-                  Чем вы хотите поделиться
-                </h2>
-                {/* Кнопка для мобильного режима */}
-                <button
-                  type="button"
-                  className="sm:hidden flex items-center justify-center p-2 rounded-full hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-primary"
-                  aria-label={groupsExpanded ? 'Скрыть разделы' : 'Показать разделы'}
-                  onClick={() => setGroupsExpanded((v) => !v)}
-                >
-                  {/* Иконка-гамбургер/крестик */}
-                  {groupsExpanded ? (
-                    <svg width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="#fff" strokeWidth="2" strokeLinecap="round" d="M6 6l12 12M6 18L18 6"/></svg>
-                  ) : (
-                    <svg width="24" height="24" fill="none" viewBox="0 0 24 24"><path stroke="#fff" strokeWidth="2" strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16"/></svg>
-                  )}
-                </button>
-              </div>
-              {/* Список групп: всегда виден на десктопе, на мобиле — только если раскрыто */}
-              <ul
-                className={`space-y-3 transition-all duration-200 overflow-hidden
-                  ${groupsExpanded ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'}
-                  sm:max-h-none sm:opacity-100 sm:block`}
-                style={{
-                  // На мобиле скрываем если не раскрыто
-                  display: groupsExpanded ? undefined : undefined,
-                }}
-              >
+              <h2 className="text-center text-lg font-semibold text-slate-100">
+                Чем вы хотите поделиться
+              </h2>
+              <ul className="space-y-3">
                 {groups.length === 0 && (
                   <li className="rounded-xl border border-dashed border-slate-700 px-4 py-5 text-center text-sm text-slate-400">
                     У вас пока нет групп фактов. Добавьте их в разделе «Мои факты».

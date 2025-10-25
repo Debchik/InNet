@@ -40,18 +40,26 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
         }
 
         qr = new Html5Qrcode("reader");
+        const config: Record<string, unknown> = {
+          fps: 10,
+          rememberLastUsedCamera: true,
+        };
+
+        if (Html5QrcodeSupportedFormats?.QR_CODE != null) {
+          config.formatsToSupport = [Html5QrcodeSupportedFormats.QR_CODE];
+        }
+
+        const minDimension = Math.min(window.innerWidth, window.innerHeight);
+        config.qrbox = Math.max(200, Math.floor(minDimension * 0.6));
+
         await qr.start(
-          { facingMode: "environment" },
-          {
-            fps: 10,
-            qrbox: 240,
-            formatsToSupport: Html5QrcodeSupportedFormats
-              ? [Html5QrcodeSupportedFormats.QR_CODE]
-              : undefined,
-          },
+          { facingMode: { exact: "environment" } },
+          config,
           (decoded: string) => {
             if (!isMounted) return;
-            onScan(decoded);
+            if (decoded && typeof decoded === 'string') {
+              onScan(decoded);
+            }
           },
           (err: unknown) => {
             if (!isMounted) return;
@@ -74,6 +82,15 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
     };
 
     startScanner();
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        startedRef.current = false;
+        startScanner();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
 
     return () => {
       isMounted = false;
@@ -99,6 +116,7 @@ export default function QRScanner({ onScan, onError }: QRScannerProps) {
           /* ignore */
         }
       }
+      document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [onScan, onError]);
 
