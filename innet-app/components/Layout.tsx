@@ -12,6 +12,7 @@ interface LayoutProps {
  * expand the application. The footer displays minimal metadata.
  */
 export default function Layout({ children }: LayoutProps) {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const router = useRouter();
   const year = new Date().getFullYear();
   const isAppRoute = router.pathname.startsWith('/app');
@@ -116,32 +117,48 @@ export default function Layout({ children }: LayoutProps) {
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
-      <header className="flex items-center px-4 py-3 border-b border-gray-700 gap-4">
+      <header className="flex items-center px-4 py-3 border-b border-gray-700 gap-4 relative">
         <Link href="/" className="text-2xl font-bold text-primary">
           InNet
         </Link>
-        <div className="flex-1 flex justify-center">
-          {isAppRoute && (
-            <nav className="hidden md:flex space-x-6 text-sm">
-              <Link href="/app/qr" className="hover:text-primary">
-                QR
-              </Link>
-              <Link href="/app/graph" className="hover:text-primary">
-                Сеть
-              </Link>
-              <Link href="/app/facts" className="hover:text-primary">
-                Мои факты
-              </Link>
-              <Link href="/app/contacts" className="hover:text-primary">
-                Контакты
-              </Link>
-              <Link href="/app/profile" className="hover:text-primary">
-                Мой профиль
-              </Link>
-            </nav>
-          )}
-        </div>
-        <div className="flex items-center space-x-4 text-sm">
+        {/* Центр — пустой flex-1 для выравнивания */}
+        <div className="flex-1" />
+        {/* Десктоп-меню */}
+        {isAppRoute && (
+          <nav className="hidden md:flex space-x-6 text-sm mr-2">
+            <Link href="/app/qr" className="hover:text-primary">
+              QR
+            </Link>
+            <Link href="/app/graph" className="hover:text-primary">
+              Сеть
+            </Link>
+            <Link href="/app/facts" className="hover:text-primary">
+              Мои факты
+            </Link>
+            <Link href="/app/contacts" className="hover:text-primary">
+              Контакты
+            </Link>
+            <Link href="/app/profile" className="hover:text-primary">
+              Мой профиль
+            </Link>
+          </nav>
+        )}
+        {/* Мобильный гамбургер строго справа */}
+        {isAppRoute && (
+          <button
+            className="md:hidden flex items-center justify-center p-2 ml-2 rounded focus:outline-none focus:ring-2 focus:ring-primary"
+            aria-label={mobileMenuOpen ? 'Закрыть меню' : 'Открыть меню'}
+            onClick={() => setMobileMenuOpen((v) => !v)}
+            style={{ marginLeft: 'auto' }}
+          >
+            {mobileMenuOpen ? (
+              <svg width="28" height="28" fill="none" viewBox="0 0 24 24"><path stroke="#fff" strokeWidth="2" strokeLinecap="round" d="M6 6l12 12M6 18L18 6"/></svg>
+            ) : (
+              <svg width="28" height="28" fill="none" viewBox="0 0 24 24"><path stroke="#fff" strokeWidth="2" strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16"/></svg>
+            )}
+          </button>
+        )}
+        <div className="flex items-center space-x-4 text-sm ml-2">
           {isLandingHome && (
             isAuthenticated ? (
               <Link
@@ -165,6 +182,38 @@ export default function Layout({ children }: LayoutProps) {
             )
           )}
         </div>
+        {/* Модальное меню для мобильных */}
+        {isAppRoute && mobileMenuOpen && (
+          <div className="fixed inset-0 z-50 bg-black/70 flex items-start justify-end md:hidden" onClick={() => setMobileMenuOpen(false)}>
+            <nav
+              className="w-64 bg-gray-900 h-full shadow-lg flex flex-col pt-8 px-6 gap-2 animate-slide-in-right"
+              onClick={e => e.stopPropagation()}
+            >
+              <button
+                className="self-end mb-6 p-2 rounded hover:bg-gray-800"
+                aria-label="Закрыть меню"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                <svg width="28" height="28" fill="none" viewBox="0 0 24 24"><path stroke="#fff" strokeWidth="2" strokeLinecap="round" d="M6 6l12 12M6 18L18 6"/></svg>
+              </button>
+              <Link href="/app/qr" className="py-3 px-2 rounded hover:bg-primary/20 text-lg font-medium" onClick={() => setMobileMenuOpen(false)}>
+                QR
+              </Link>
+              <Link href="/app/graph" className="py-3 px-2 rounded hover:bg-primary/20 text-lg font-medium" onClick={() => setMobileMenuOpen(false)}>
+                Сеть
+              </Link>
+              <Link href="/app/facts" className="py-3 px-2 rounded hover:bg-primary/20 text-lg font-medium" onClick={() => setMobileMenuOpen(false)}>
+                Мои факты
+              </Link>
+              <Link href="/app/contacts" className="py-3 px-2 rounded hover:bg-primary/20 text-lg font-medium" onClick={() => setMobileMenuOpen(false)}>
+                Контакты
+              </Link>
+              <Link href="/app/profile" className="py-3 px-2 rounded hover:bg-primary/20 text-lg font-medium" onClick={() => setMobileMenuOpen(false)}>
+                Мой профиль
+              </Link>
+            </nav>
+          </div>
+        )}
       </header>
       {/* {isAppRoute && notifications.length > 0 && (
         <div className="px-4 pt-4 space-y-3">
