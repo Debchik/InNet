@@ -21,6 +21,8 @@ import {
   parseShareToken,
   ShareGroup,
   SHARE_PREFIX,
+  buildShareUrl,
+  extractShareToken,
 } from '../../lib/share';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -146,6 +148,12 @@ export default function QRPage() {
     }
   }, [profileId, profile, shareGroups, shareNonce]);
 
+  const shareLink = useMemo(() => {
+    if (!shareTokenInfo.token || shareTokenInfo.token === SHARE_PREFIX) return '';
+    if (!isReady && typeof window === 'undefined') return '';
+    return buildShareUrl(shareTokenInfo.token);
+  }, [shareTokenInfo.token, isReady]);
+
   useEffect(() => {
     setShareError(shareTokenInfo.error);
   }, [shareTokenInfo.error]);
@@ -177,14 +185,20 @@ export default function QRPage() {
     }
   }, [profileId, profile, responseGroups, responseNonce, responseOpen]);
 
+  const responseLink = useMemo(() => {
+    if (!responseToken) return '';
+    if (!isReady && typeof window === 'undefined') return '';
+    return buildShareUrl(responseToken);
+  }, [responseToken, isReady]);
+
   const handleCopy = async () => {
-    if (!shareTokenInfo.token || shareTokenInfo.token === SHARE_PREFIX) return;
+    if (!shareLink) return;
     if (typeof navigator === 'undefined' || !navigator.clipboard) {
       setCopyState('error');
       return;
     }
     try {
-      await navigator.clipboard.writeText(shareTokenInfo.token);
+      await navigator.clipboard.writeText(shareLink);
       setCopyState('copied');
       setTimeout(() => setCopyState('idle'), 2000);
     } catch {
@@ -199,9 +213,10 @@ export default function QRPage() {
       const text = tokenInput.trim();
       const value = text || (await navigator.clipboard.readText());
       if (!value) return;
+      const token = extractShareToken(value) ?? value.trim();
       let payload;
       try {
-        payload = parseShareToken(value.trim());
+        payload = parseShareToken(token.trim());
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Некорректный токен.';
         setScanError(message);
@@ -213,7 +228,7 @@ export default function QRPage() {
         setScanMessage(null);
         return;
       }
-      handleScan(value, payload);
+      handleScan(token, payload);
       setTokenInput('');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Не удалось вставить токен.';
@@ -223,15 +238,22 @@ export default function QRPage() {
 
   const handleScan = (decoded: string, preParsed?: ReturnType<typeof parseShareToken>) => {
     if (!decoded) return;
-    const now = Date.now();
-    if (lastTokenRef.current === decoded && now - lastTokenTsRef.current < 1500) {
+    const normalized = preParsed ? decoded.trim() : extractShareToken(decoded) ?? decoded.trim();
+    if (!normalized || !normalized.startsWith(SHARE_PREFIX)) {
+      setScanError('Не удалось распознать ссылку обмена.');
+      setScanMessage(null);
       return;
     }
-    lastTokenRef.current = decoded;
+
+    const now = Date.now();
+    if (lastTokenRef.current === normalized && now - lastTokenTsRef.current < 1500) {
+      return;
+    }
+    lastTokenRef.current = normalized;
     lastTokenTsRef.current = now;
 
     try {
-      const payload = preParsed ?? parseShareToken(decoded.trim());
+      const payload = preParsed ?? parseShareToken(normalized);
       if (payload?.owner?.id && payload.owner.id === profileId) {
         setScanError('Эй, эгоист! Сам себя в друзья не записывай 😅');
         setScanMessage(null);
@@ -367,7 +389,7 @@ export default function QRPage() {
                 <p className="max-w-xs text-center text-sm text-red-400">{shareError}</p>
               ) : (
                 <QRCode
-                  value={shareTokenInfo.token}
+                  value={shareLink || SHARE_PREFIX}
                   fgColor="#0D9488"
                   bgColor="#0F172A"
                   style={{ width: 240, height: 240 }}
@@ -414,6 +436,7 @@ export default function QRPage() {
               tokenInput={tokenInput}
               onTokenInput={setTokenInput}
               onPaste={handleTokenPaste}
+              copyDisabled={!shareLink}
             />
           </section>
         ) : (
@@ -443,14 +466,14 @@ export default function QRPage() {
       </div>
 
       {responseOpen && (
-        <ResponseModal
-          profile={profile}
-          groups={groups}
-          selection={responseSelection}
-          onToggle={handleResponseToggle}
-          onClose={closeResponseModal}
-          token={responseToken}
-        />
+      <ResponseModal
+        profile={profile}
+        groups={groups}
+        selection={responseSelection}
+        onToggle={handleResponseToggle}
+        onClose={closeResponseModal}
+        token={responseLink}
+      />
       )}
       {manualModalOpen && (
         <ManualContactModal
@@ -531,6 +554,7 @@ function ShareControls({
   onTokenInput,
   onPaste,
   compact,
+  copyDisabled,
 }: {
   onCopy: () => void;
   copyState: 'idle' | 'copied' | 'error';
@@ -538,6 +562,7 @@ function ShareControls({
   onTokenInput: (value: string) => void;
   onPaste: () => void;
   compact?: boolean;
+  copyDisabled?: boolean;
 }) {
   return (
     <div
@@ -547,9 +572,14 @@ function ShareControls({
     >
       <button
         onClick={onCopy}
-        className="w-full rounded-full bg-slate-700 px-4 py-2 text-sm text-slate-100 transition hover:bg-slate-600 sm:w-auto"
+        disabled={copyDisabled}
+        className={`w-full rounded-full px-4 py-2 text-sm text-slate-100 transition sm:w-auto ${
+          copyDisabled
+            ? 'bg-slate-700/60 cursor-not-allowed opacity-60'
+            : 'bg-slate-700 hover:bg-slate-600'
+        }`}
       >
-        Скопировать токен
+        Скопировать ссылку
       </button>
       {!compact && (
         <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
@@ -557,7 +587,7 @@ function ShareControls({
             type="text"
             value={tokenInput}
             onChange={(event) => onTokenInput(event.target.value)}
-            placeholder="Вставьте токен вручную"
+            placeholder="Вставьте ссылку или токен вручную"
             className="w-full rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary"
           />
           <button
@@ -696,8 +726,9 @@ function ResponseModal({
               copyState={copyState}
               tokenInput=""
               onTokenInput={() => {}}
-              onPaste={handleCopy}
+              onPaste={() => {}}
               compact
+              copyDisabled={!token}
             />
             <div className="rounded-2xl bg-slate-900 p-5 shadow-inner">
               {token ? (

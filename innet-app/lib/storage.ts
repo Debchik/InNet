@@ -71,6 +71,7 @@ export interface UserAccount {
   createdAt: number;
   verified: boolean;
   pendingVerificationCode?: string;
+  quickSignup?: boolean;
 }
 
 /* Key names used for persisting to localStorage */

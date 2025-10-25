@@ -44,6 +44,77 @@ export interface MergeResult {
   addedFacts: number;
 }
 
+export function buildShareUrl(token: string, originOverride?: string): string {
+  if (!token) return '';
+  const vercelHost = process.env.NEXT_PUBLIC_VERCEL_URL;
+  const envOrigin =
+    process.env.NEXT_PUBLIC_APP_ORIGIN ||
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    (vercelHost ? `https://${vercelHost.replace(/^https?:\/\//, '')}` : '') ||
+    '';
+  const origin =
+    originOverride ||
+    (typeof window !== 'undefined' ? window.location.origin : undefined) ||
+    envOrigin ||
+    'https://innet.app';
+  if (!origin) {
+    return token;
+  }
+  const normalizedOrigin = origin.replace(/\/$/, '');
+  return `${normalizedOrigin}/share?token=${encodeURIComponent(token)}`;
+}
+
+export function extractShareToken(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith(SHARE_PREFIX)) {
+    return trimmed;
+  }
+
+  if (/^innet-share%3A/i.test(trimmed)) {
+    const decodedFromEscaped = decodeCandidate(trimmed);
+    if (decodedFromEscaped) {
+      return decodedFromEscaped;
+    }
+  }
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      const url = new URL(trimmed);
+      const tokenParam = url.searchParams.get('token');
+      if (tokenParam) {
+        const decoded = decodeCandidate(tokenParam);
+        if (decoded) return decoded;
+      }
+
+      const path = url.pathname.startsWith('/') ? url.pathname : `/${url.pathname}`;
+      if (path.startsWith('/share/')) {
+        const slug = path.slice('/share/'.length);
+        const decoded = decodeCandidate(slug);
+        if (decoded) return decoded;
+      }
+    } catch {
+      // Ignore URL parse errors and fall through.
+    }
+  }
+
+  const queryMatch = trimmed.match(/[?&]token=([^&]+)/);
+  if (queryMatch && queryMatch[1]) {
+    const decoded = decodeCandidate(queryMatch[1]);
+    if (decoded) return decoded;
+  }
+
+  if (!trimmed.includes('://')) {
+    const candidate = decodeCandidate(trimmed);
+    if (candidate && candidate.startsWith(SHARE_PREFIX)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 export function generateShareToken(payload: SharePayload): string {
   const json = JSON.stringify(sanitizePayload(payload));
   const token = SHARE_PREFIX + base64UrlEncode(json);
@@ -201,6 +272,39 @@ function sanitizePayload(payload: SharePayload): SharePayload {
         .filter((fact) => fact.text),
     })),
   };
+}
+
+function decodeCandidate(raw: string): string {
+  if (!raw) return '';
+  let candidate = raw.trim();
+  if (!candidate) return '';
+
+  try {
+    candidate = decodeURIComponent(candidate);
+  } catch {
+    // ignore decode errors, use raw candidate
+  }
+
+  const normalized = candidate.trim();
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized.startsWith(SHARE_PREFIX)) {
+    return normalized;
+  }
+
+  const prefixIndex = normalized.indexOf(SHARE_PREFIX);
+  if (prefixIndex >= 0) {
+    return normalized.slice(prefixIndex);
+  }
+
+  if (/^innet-share%3A/i.test(normalized)) {
+    const rest = normalized.replace(/^innet-share%3A/i, '');
+    return SHARE_PREFIX + rest;
+  }
+
+  return normalized ? `${SHARE_PREFIX}${normalized}` : '';
 }
 
 function base64UrlEncode(input: string): string {
