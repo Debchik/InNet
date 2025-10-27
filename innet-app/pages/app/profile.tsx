@@ -160,17 +160,29 @@ export default function ProfilePage() {
     return [profile.name, profile.surname].filter(Boolean).join(' ').trim();
   }, [profile]);
 
-  const normalizeHandle = (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed) return undefined;
-    return trimmed.startsWith('@') ? trimmed : `@${trimmed}`;
-  };
+const normalizeHandle = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimmed.startsWith('@') ? trimmed : `@${trimmed}`;
+};
 
-  const persistAvatar = useCallback(
-    (updatedProfile: ProfileInfo) => {
-      try {
-        const users = loadUsers();
-        const updatedUsers = users.map((user) =>
+const isSameUser = useCallback(
+  (user: { id: string; email: string }, reference?: ProfileInfo | null) => {
+    const base = reference ?? profile;
+    if (!base) return false;
+    if (base.id) {
+      return user.id === base.id;
+    }
+    return user.email.trim().toLowerCase() === base.email.trim().toLowerCase();
+  },
+  [profile]
+);
+
+const persistAvatar = useCallback(
+  (updatedProfile: ProfileInfo) => {
+    try {
+      const users = loadUsers();
+      const updatedUsers = users.map((user) =>
           isSameUser(user, updatedProfile)
             ? { ...user, avatar: updatedProfile.avatar, avatarType: updatedProfile.avatarType }
             : user
@@ -309,18 +321,6 @@ export default function ProfilePage() {
   const handleAvatarReset = () => {
     updateAvatar(null);
   };
-
-  const isSameUser = useCallback(
-    (user: { id: string; email: string }, reference?: ProfileInfo | null) => {
-      const base = reference ?? profile;
-      if (!base) return false;
-      if (base.id) {
-        return user.id === base.id;
-      }
-      return user.email.trim().toLowerCase() === base.email.trim().toLowerCase();
-    },
-    [profile]
-  );
 
   /* const handleVerifyCode = async () => {
     if (!profile) return;
