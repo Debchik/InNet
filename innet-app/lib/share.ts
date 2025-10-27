@@ -61,7 +61,7 @@ export function buildShareUrl(token: string, originOverride?: string): string {
     return token;
   }
   const normalizedOrigin = origin.replace(/\/$/, '');
-  return `${normalizedOrigin}/share?token=${encodeURIComponent(token)}`;
+  return `${normalizedOrigin}/share?token=${token}`;
 }
 
 export function extractShareToken(value: string | null | undefined): string | null {

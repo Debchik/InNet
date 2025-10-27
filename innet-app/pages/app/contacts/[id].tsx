@@ -1,5 +1,6 @@
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
+import type { ChangeEvent } from 'react';
 import Layout from '../../../components/Layout';
 import {
   Contact,
@@ -19,6 +20,21 @@ export default function ContactDetail() {
   const [contact, setContact] = useState<Contact | null>(null);
   const [noteText, setNoteText] = useState('');
   const [noteError, setNoteError] = useState<string | null>(null);
+
+  const handleNoteChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
+    const raw = event.target.value;
+    const next = raw.slice(0, CONTACT_NOTE_LIMIT);
+    if (
+      next.length === CONTACT_NOTE_LIMIT &&
+      next.length !== noteText.length &&
+      (!noteError || noteError === 'Достигнут лимит символов для заметки.')
+    ) {
+      setNoteError('Достигнут лимит символов для заметки.');
+    } else if (noteError === 'Достигнут лимит символов для заметки.' && next.length < CONTACT_NOTE_LIMIT) {
+      setNoteError(null);
+    }
+    setNoteText(next);
+  };
 
   useEffect(() => {
     if (!id || Array.isArray(id)) return;
@@ -106,12 +122,6 @@ export default function ContactDetail() {
               <p className="text-sm text-slate-400">Знакомство состоялось {connectedLabel}</p>
             </div>
           </div>
-          <button
-            onClick={handleDeleteContact}
-            className="mt-3 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-background transition-colors hover:bg-red-500 md:mt-0"
-          >
-            Удалить контакт
-          </button>
         </header>
 
         {(contact.phone || contact.telegram || contact.instagram) && (
@@ -171,16 +181,13 @@ export default function ContactDetail() {
           <form onSubmit={handleAddNote} className="mt-4 space-y-2">
             <textarea
               value={noteText}
-              onChange={(event) => setNoteText(event.target.value.slice(0, CONTACT_NOTE_LIMIT))}
+              onChange={handleNoteChange}
               rows={3}
               maxLength={CONTACT_NOTE_LIMIT}
               className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-primary"
               placeholder="Добавьте заметку о встрече, интересах или договорённостях..."
             />
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <span className="text-xs text-slate-500">
-                {noteText.length}/{CONTACT_NOTE_LIMIT}
-              </span>
+            <div className="flex justify-end">
               <button
                 type="submit"
                 className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-background transition hover:bg-secondary sm:w-auto"
@@ -215,6 +222,14 @@ export default function ContactDetail() {
                 </div>
               ))
             )}
+          </div>
+          <div className="mt-6 flex justify-end">
+            <button
+              onClick={handleDeleteContact}
+              className="rounded-md border border-red-500/40 px-4 py-2 text-xs font-semibold text-red-300 transition hover:border-red-400 hover:text-red-200"
+            >
+              Удалить контакт
+            </button>
           </div>
         </section>
       </div>

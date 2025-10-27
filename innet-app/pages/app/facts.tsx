@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import Layout from '../../components/Layout';
 import {
@@ -9,14 +9,7 @@ import {
   createFactGroup,
   createFact,
 } from '../../lib/storage';
-
-const COLOR_OPTIONS = [
-  { value: '#0D9488', label: 'Бирюзовый' },
-  { value: '#6366F1', label: 'Лавандовый' },
-  { value: '#F97316', label: 'Апельсиновый' },
-  { value: '#EC4899', label: 'Розовый' },
-  { value: '#22D3EE', label: 'Ледяной' },
-] as const;
+import { FACT_CATEGORY_CONFIG } from '../../lib/categories';
 
 const MAX_GROUPS = 3;
 const MAX_FACTS_PER_GROUP = 5;
@@ -32,8 +25,7 @@ type FocusRequest = { groupId: string; factId: string } | null;
  */
 export default function FactsPage() {
   const [groups, setGroups] = useState<FactGroup[]>([]);
-  const [newGroupName, setNewGroupName] = useState('');
-  const [newGroupColor, setNewGroupColor] = useState<string>(COLOR_OPTIONS[0].value);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
   const [errors, setErrors] = useState('');
   const [deleteMode, setDeleteMode] = useState(false);
   const [pendingGroupDeletes, setPendingGroupDeletes] = useState<Set<string>>(
@@ -49,22 +41,48 @@ export default function FactsPage() {
     setGroups(loadFactGroups());
   }, []);
 
+  const availableCategories = useMemo(() => {
+    const used = new Set(
+      groups
+        .map((group) =>
+          FACT_CATEGORY_CONFIG.find((category) => category.label === group.name)?.id ?? null
+        )
+        .filter((value): value is string => Boolean(value))
+    );
+    return FACT_CATEGORY_CONFIG.filter((category) => !used.has(category.id));
+  }, [groups]);
+
+  useEffect(() => {
+    if (availableCategories.length === 0) {
+      setSelectedCategoryId('');
+      return;
+    }
+    setSelectedCategoryId((prev) =>
+      prev && availableCategories.some((category) => category.id === prev)
+        ? prev
+        : availableCategories[0].id
+    );
+  }, [availableCategories]);
+
+  const selectedCategory = useMemo(
+    () => FACT_CATEGORY_CONFIG.find((category) => category.id === selectedCategoryId) ?? null,
+    [selectedCategoryId]
+  );
+
   const handleAddGroup = () => {
     if (deleteMode) return;
     if (groups.length >= MAX_GROUPS) {
       setLimitNotice('Достигнут лимит созданных групп. Удалите существующую или используйте одну из них.');
       return;
     }
-    const trimmedName = newGroupName.trim();
-    if (!trimmedName) {
-      setErrors('Укажите название группы');
+    if (!selectedCategory) {
+      setErrors('Свободных категорий нет. Удалите одну из существующих групп.');
       return;
     }
-    const group = createFactGroup(trimmedName, newGroupColor);
+    const group = createFactGroup(selectedCategory.label, selectedCategory.color);
     const updated = [...groups, group];
     setGroups(updated);
     saveFactGroups(updated);
-    setNewGroupName('');
     setErrors('');
   };
 
@@ -203,52 +221,47 @@ export default function FactsPage() {
           {errors && <p className="mb-2 text-sm text-red-500">{errors}</p>}
           <div className="flex flex-col space-y-3 md:flex-row md:items-end md:space-x-4 md:space-y-0">
             <div className="flex-1">
-              <label className="mb-1 block text-sm" htmlFor="groupName">
-                Название
+              <label className="mb-1 block text-sm" htmlFor="groupCategory">
+                Категория
               </label>
-              <input
-                id="groupName"
-                type="text"
-                value={newGroupName}
-                onChange={(e) => setNewGroupName(e.target.value)}
-                disabled={deleteMode}
+              <select
+                id="groupCategory"
+                value={selectedCategoryId}
+                onChange={(event) => {
+                  setSelectedCategoryId(event.target.value);
+                  setErrors('');
+                }}
+                disabled={deleteMode || availableCategories.length === 0}
                 className={`w-full rounded-md border border-gray-600 bg-gray-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary ${
-                  deleteMode ? 'cursor-not-allowed opacity-50' : ''
+                  deleteMode || availableCategories.length === 0 ? 'cursor-not-allowed opacity-50' : ''
                 }`}
-              />
+              >
+                {availableCategories.length === 0 ? (
+                  <option value="">Свободных категорий нет</option>
+                ) : (
+                  availableCategories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.label}
+                    </option>
+                  ))
+                )}
+              </select>
             </div>
-            <div className="flex-1">
-              <label className="mb-1 block text-sm" htmlFor="groupColor">
-                Цвет группы
-              </label>
-              <div className="grid grid-cols-5 gap-2">
-                {COLOR_OPTIONS.map((option) => {
-                  const isActive = option.value === newGroupColor;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      disabled={deleteMode}
-                      onClick={() => setNewGroupColor(option.value)}
-                      className={`h-10 w-full rounded-md border transition ${
-                        deleteMode
-                          ? 'cursor-not-allowed border-gray-700 opacity-40'
-                          : isActive
-                            ? 'border-primary ring-2 ring-primary/60'
-                            : 'border-gray-700 hover:border-primary/60'
-                      }`}
-                      style={{ backgroundColor: option.value }}
-                      aria-label={`Выбрать цвет ${option.label}`}
-                    />
-                  );
-                })}
+            {selectedCategory && (
+              <div className="flex items-center gap-3 rounded-md border border-gray-600 bg-gray-700 px-3 py-2 text-sm text-gray-200">
+                <span>Предпросмотр</span>
+                <span
+                  className="h-8 w-8 rounded-full"
+                  style={{ backgroundColor: selectedCategory.color }}
+                  aria-hidden
+                />
               </div>
-            </div>
+            )}
             <button
               onClick={handleAddGroup}
-              disabled={deleteMode}
+              disabled={deleteMode || !selectedCategory || availableCategories.length === 0}
               className={`rounded-md px-5 py-2 text-sm font-medium transition-colors ${
-                deleteMode
+                deleteMode || !selectedCategory || availableCategories.length === 0
                   ? 'cursor-not-allowed bg-primary/30 text-background/50'
                   : 'bg-primary text-background hover:bg-secondary'
               }`}
@@ -256,6 +269,11 @@ export default function FactsPage() {
               Добавить группу
             </button>
           </div>
+          {availableCategories.length === 0 && (
+            <p className="mt-2 text-xs text-slate-400">
+              Все категории уже используются. Удалите одну из групп, чтобы освободить место.
+            </p>
+          )}
         </div>
 
         <div className="space-y-6">
@@ -386,19 +404,29 @@ function FactQuickAdd({
     }
     const nextValue = event.target.value.slice(0, FACT_TEXT_LIMIT);
     setValue(nextValue);
+  };
 
-    if (!nextValue.trim()) {
-      return;
-    }
+  const commitValue = useCallback(
+    (raw: string) => {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        return false;
+      }
+      const newId = onCommit(trimmed);
+      if (!newId) {
+        return false;
+      }
+      setValue('');
+      textareaRef.current?.blur();
+      onFocusRequest(newId);
+      return true;
+    },
+    [onCommit, onFocusRequest]
+  );
 
-    const newId = onCommit(nextValue);
-    if (!newId) {
-      return;
-    }
-
-    setValue('');
-    textareaRef.current?.blur();
-    onFocusRequest(newId);
+  const handleBlur = () => {
+    if (disabled || limitReached) return;
+    commitValue(value);
   };
 
   const isDisabled = disabled || limitReached;
@@ -412,7 +440,18 @@ function FactQuickAdd({
       maxLength={FACT_TEXT_LIMIT}
       onMouseDown={handleMouseDown}
       onFocus={handleFocus}
-      onKeyDown={handleKeyDown}
+      onKeyDown={(event) => {
+        if (limitReached) {
+          handleKeyDown(event);
+          return;
+        }
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          commitValue(value || event.currentTarget.value);
+          return;
+        }
+      }}
+      onBlur={handleBlur}
       placeholder="Нажмите и начните печатать новый факт"
       disabled={disabled}
       readOnly={disabled || limitReached}

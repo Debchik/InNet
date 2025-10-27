@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ChangeEvent, RefObject } from 'react';
 import Layout from '../../components/Layout';
 import { loadUsers, saveUsers } from '../../lib/storage';
 import { syncProfileToSupabase } from '../../lib/profileSync';
@@ -21,6 +22,12 @@ const PRESET_AVATAR_STYLES: Record<string, string> = {
   sunset: 'bg-gradient-to-br from-amber-400 via-rose-500 to-pink-500',
   forest: 'bg-gradient-to-br from-emerald-400 via-teal-500 to-cyan-500',
   midnight: 'bg-gradient-to-br from-indigo-500 via-purple-500 to-blue-500',
+};
+
+const PRESET_AVATAR_LABELS: Record<string, string> = {
+  sunset: 'Sunset',
+  forest: 'Forest',
+  midnight: 'Midnight',
 };
 
 /* const sendVerificationEmail = async (recipient: string, personName: string) => {
@@ -57,6 +64,12 @@ export default function ProfilePage() {
   const [contactsFeedback, setContactsFeedback] =
     useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [isSavingContacts, setIsSavingContacts] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const avatarVideoRef = useRef<HTMLVideoElement>(null);
+  const avatarStreamRef = useRef<MediaStream | null>(null);
+  const [avatarCameraOpen, setAvatarCameraOpen] = useState(false);
+  const [avatarCameraError, setAvatarCameraError] = useState<string | null>(null);
+  const [presetPickerOpen, setPresetPickerOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -122,6 +135,26 @@ export default function ProfilePage() {
     setIsReady(true);
   }, []);
 
+  const stopAvatarStream = useCallback(() => {
+    if (avatarStreamRef.current) {
+      avatarStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {
+          /* ignore */
+        }
+      });
+      avatarStreamRef.current = null;
+    }
+    if (avatarVideoRef.current) {
+      avatarVideoRef.current.srcObject = null;
+    }
+  }, []);
+
+  useEffect(() => () => {
+    stopAvatarStream();
+  }, [stopAvatarStream]);
+
   const fullName = useMemo(() => {
     if (!profile) return '';
     return [profile.name, profile.surname].filter(Boolean).join(' ').trim();
@@ -133,13 +166,161 @@ export default function ProfilePage() {
     return trimmed.startsWith('@') ? trimmed : `@${trimmed}`;
   };
 
-  const isSameUser = (user: { id: string; email: string }) => {
-    if (!profile) return false;
-    if (profile.id) {
-      return user.id === profile.id;
+  const persistAvatar = useCallback(
+    (updatedProfile: ProfileInfo) => {
+      try {
+        const users = loadUsers();
+        const updatedUsers = users.map((user) =>
+          isSameUser(user, updatedProfile)
+            ? { ...user, avatar: updatedProfile.avatar, avatarType: updatedProfile.avatarType }
+            : user
+        );
+        saveUsers(updatedUsers);
+      } catch (error) {
+        console.warn('[profile] Failed to persist avatar', error);
+      }
+
+      if (typeof window !== 'undefined') {
+        if (updatedProfile.avatar && updatedProfile.avatarType) {
+          localStorage.setItem('innet_current_user_avatar', updatedProfile.avatar);
+          localStorage.setItem('innet_current_user_avatar_type', updatedProfile.avatarType);
+        } else {
+          localStorage.removeItem('innet_current_user_avatar');
+          localStorage.removeItem('innet_current_user_avatar_type');
+        }
+        window.dispatchEvent(new Event('innet-profile-updated'));
+      }
+    },
+    [isSameUser]
+  );
+
+  const updateAvatar = useCallback(
+    (type: 'preset' | 'upload' | null, value?: string) => {
+      if (!profile) return;
+      if (type && !value) {
+        return;
+      }
+
+      const nextProfile: ProfileInfo = {
+        ...profile,
+        avatarType: type ?? undefined,
+        avatar: type ? value : undefined,
+      };
+
+      setProfile(nextProfile);
+      persistAvatar(nextProfile);
+      setPresetPickerOpen(false);
+    },
+    [persistAvatar, profile]
+  );
+
+  const openAvatarCamera = useCallback(async () => {
+    setPresetPickerOpen(false);
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setAvatarCameraError('Камера не поддерживается в этом браузере.');
+      setAvatarCameraOpen(true);
+      return;
     }
-    return user.email.trim().toLowerCase() === profile.email.trim().toLowerCase();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'user' } },
+        audio: false,
+      });
+      stopAvatarStream();
+      avatarStreamRef.current = stream;
+      const video = avatarVideoRef.current;
+      if (video) {
+        video.srcObject = stream;
+        video.playsInline = true;
+        const playVideo = () => {
+          const playPromise = video.play();
+          if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(() => undefined);
+          }
+        };
+        if (video.readyState >= 2) {
+          playVideo();
+        } else {
+          const handleLoaded = () => {
+            playVideo();
+            video.removeEventListener('loadedmetadata', handleLoaded);
+          };
+          video.addEventListener('loadedmetadata', handleLoaded);
+        }
+      }
+      setAvatarCameraError(null);
+      setAvatarCameraOpen(true);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Не удалось получить доступ к камере. Проверьте разрешения.';
+      setAvatarCameraError(message);
+      setAvatarCameraOpen(true);
+    }
+  }, [stopAvatarStream]);
+
+  const closeAvatarCamera = useCallback(() => {
+    stopAvatarStream();
+    setAvatarCameraOpen(false);
+    setAvatarCameraError(null);
+  }, [stopAvatarStream]);
+
+  const handleCaptureAvatar = useCallback(() => {
+    const video = avatarVideoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      setAvatarCameraError('Камера ещё не готова. Попробуйте снова.');
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      setAvatarCameraError('Не удалось сделать снимок.');
+      return;
+    }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/png');
+    updateAvatar('upload', dataUrl);
+    closeAvatarCamera();
+  }, [closeAvatarCamera, updateAvatar]);
+
+  const handleAvatarUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    setPresetPickerOpen(false);
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === 'string') {
+        updateAvatar('upload', result);
+      }
+    };
+    reader.readAsDataURL(file);
+    // Allow selecting the same file again later
+    event.target.value = '';
   };
+
+  const handlePresetSelect = (presetId: string) => {
+    updateAvatar('preset', presetId);
+  };
+
+  const handleAvatarReset = () => {
+    updateAvatar(null);
+  };
+
+  const isSameUser = useCallback(
+    (user: { id: string; email: string }, reference?: ProfileInfo | null) => {
+      const base = reference ?? profile;
+      if (!base) return false;
+      if (base.id) {
+        return user.id === base.id;
+      }
+      return user.email.trim().toLowerCase() === base.email.trim().toLowerCase();
+    },
+    [profile]
+  );
 
   /* const handleVerifyCode = async () => {
     if (!profile) return;
@@ -291,13 +472,14 @@ export default function ProfilePage() {
         } else {
           localStorage.removeItem('innet_current_user_telegram');
         }
-      if (instagramValue) {
-        localStorage.setItem('innet_current_user_instagram', instagramValue);
-      } else {
-        localStorage.removeItem('innet_current_user_instagram');
+        if (instagramValue) {
+          localStorage.setItem('innet_current_user_instagram', instagramValue);
+        } else {
+          localStorage.removeItem('innet_current_user_instagram');
+        }
+        window.dispatchEvent(new Event('innet-refresh-notifications'));
+        window.dispatchEvent(new Event('innet-profile-updated'));
       }
-      window.dispatchEvent(new Event('innet-refresh-notifications'));
-    }
 
       void syncProfileToSupabase({
         email: profile.email,
@@ -316,14 +498,6 @@ export default function ProfilePage() {
     } finally {
       setIsSavingContacts(false);
     }
-  };
-
-  const resetContactsFields = () => {
-    if (!profile) return;
-    setPhoneInput(profile.phone ?? '');
-    setTelegramInput(profile.telegram ?? '');
-    setInstagramInput(profile.instagram ?? '');
-    setContactsFeedback(null);
   };
 
   return (
@@ -371,6 +545,63 @@ export default function ProfilePage() {
                 <p className="text-sm text-gray-400">
                   Почта: <span className="text-gray-200">{profile.email || '—'}</span>
                 </p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2 sm:justify-start">
+                  <button
+                    type="button"
+                    onClick={() => setPresetPickerOpen((prev) => !prev)}
+                    className="rounded-full border border-gray-600 px-4 py-2 text-xs font-semibold text-gray-200 transition hover:border-primary hover:text-primary"
+                  >
+                    {presetPickerOpen ? 'Скрыть пресеты' : 'Выбрать пресет'}
+                  </button>
+                  <label className="cursor-pointer rounded-full border border-gray-600 px-4 py-2 text-xs font-semibold text-gray-200 transition hover:border-primary hover:text-primary">
+                    Загрузить фото
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleAvatarUpload}
+                      className="sr-only"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void openAvatarCamera()}
+                    className="rounded-full border border-gray-600 px-4 py-2 text-xs font-semibold text-gray-200 transition hover:border-primary hover:text-primary"
+                  >
+                    Сделать селфи
+                  </button>
+                  {(profile.avatar || profile.avatarType) && (
+                    <button
+                      type="button"
+                      onClick={handleAvatarReset}
+                      className="rounded-full border border-gray-600 px-4 py-2 text-xs font-semibold text-gray-200 transition hover:border-red-400 hover:text-red-300"
+                    >
+                      Сбросить фото
+                    </button>
+                  )}
+                </div>
+                {presetPickerOpen && (
+                  <div className="mt-3 grid w-full grid-cols-3 gap-3 sm:grid-cols-4">
+                    {Object.entries(PRESET_AVATAR_STYLES).map(([presetId, presetClass]) => {
+                      const active = profile.avatarType === 'preset' && profile.avatar === presetId;
+                      return (
+                        <button
+                          key={presetId}
+                          type="button"
+                          onClick={() => handlePresetSelect(presetId)}
+                          className={`flex flex-col items-center rounded-lg border px-2 py-2 text-xs transition ${
+                            active
+                              ? 'border-primary text-primary'
+                              : 'border-gray-700 text-gray-300 hover:border-primary/70 hover:text-primary'
+                          }`}
+                        >
+                          <span className={`mb-2 block h-12 w-full rounded-md ${presetClass}`} />
+                          <span>{PRESET_AVATAR_LABELS[presetId] ?? presetId}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
                 {/*
                 <div className="mt-2 flex items-center justify-center sm:justify-start">
                   <span
@@ -530,18 +761,94 @@ export default function ProfilePage() {
                 >
                   {isSavingContacts ? 'Сохраняем...' : 'Сохранить контакты'}
                 </button>
-                <button
-                  type="button"
-                  onClick={resetContactsFields}
-                  className="w-full sm:w-auto rounded-md border border-gray-600 px-4 py-2 text-sm font-medium text-gray-200 transition-colors hover:border-primary"
-                >
-                  Сбросить изменения
-                </button>
               </div>
             </section>
           </div>
         )}
       </div>
+      {avatarCameraOpen && (
+        <AvatarCameraOverlay
+          videoRef={avatarVideoRef}
+          error={avatarCameraError}
+          onClose={closeAvatarCamera}
+          onCapture={handleCaptureAvatar}
+          onRetry={() => void openAvatarCamera()}
+        />
+      )}
     </Layout>
+  );
+}
+
+function AvatarCameraOverlay({
+  videoRef,
+  error,
+  onClose,
+  onCapture,
+  onRetry,
+}: {
+  videoRef: RefObject<HTMLVideoElement>;
+  error: string | null;
+  onClose: () => void;
+  onCapture: () => void;
+  onRetry: () => void;
+}) {
+  const hasError = Boolean(error);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4">
+      <div className="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-6 text-slate-100 shadow-lg">
+        <h3 className="text-lg font-semibold">Сделать селфи</h3>
+        <div className="relative mt-4 overflow-hidden rounded-lg border border-slate-700 bg-black">
+          <video
+            ref={videoRef}
+            className="h-64 w-full object-cover"
+            autoPlay
+            playsInline
+            muted
+          />
+          {hasError && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/80 px-4 py-6 text-center text-sm text-red-300">
+              <p>{error}</p>
+            </div>
+          )}
+        </div>
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          {hasError ? (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md border border-slate-700 px-4 py-2 text-sm text-slate-200 transition hover:border-primary hover:text-primary"
+              >
+                Закрыть
+              </button>
+              <button
+                type="button"
+                onClick={onRetry}
+                className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-secondary"
+              >
+                Попробовать снова
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md border border-slate-700 px-4 py-2 text-sm text-slate-200 transition hover:border-primary hover:text-primary"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={onCapture}
+                className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-secondary"
+              >
+                Сделать снимок
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

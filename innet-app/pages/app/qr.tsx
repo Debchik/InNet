@@ -45,6 +45,7 @@ const PROFILE_STORAGE_KEYS = [
   'innet_current_user_instagram',
   'innet_current_user_avatar',
 ];
+const QR_VALUE_SAFE_LIMIT = 2953;
 
 export default function QRPage() {
   // Удаляем groupsExpanded, группы всегда видны полностью
@@ -61,7 +62,6 @@ export default function QRPage() {
   const [responseOpen, setResponseOpen] = useState(false);
   const [responseSelection, setResponseSelection] = useState<string[]>([]);
   const [lastContactId, setLastContactId] = useState<string | null>(null);
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [shareNonce, setShareNonce] = useState(0);
   const [responseNonce, setResponseNonce] = useState(0);
   const [tokenInput, setTokenInput] = useState('');
@@ -148,15 +148,33 @@ export default function QRPage() {
     }
   }, [profileId, profile, shareGroups, shareNonce]);
 
-  const shareLink = useMemo(() => {
-    if (!shareTokenInfo.token || shareTokenInfo.token === SHARE_PREFIX) return '';
-    if (!isReady && typeof window === 'undefined') return '';
-    return buildShareUrl(shareTokenInfo.token);
+  const shareLinkInfo = useMemo(() => {
+    if (!shareTokenInfo.token || shareTokenInfo.token === SHARE_PREFIX) {
+      return { link: '', overflow: false };
+    }
+    if (!isReady && typeof window === 'undefined') {
+      return { link: '', overflow: false };
+    }
+    const link = buildShareUrl(shareTokenInfo.token);
+    return { link, overflow: link.length > QR_VALUE_SAFE_LIMIT };
   }, [shareTokenInfo.token, isReady]);
 
+  const shareLink = shareLinkInfo.link;
+  const shareOverflow = shareLinkInfo.overflow;
+
   useEffect(() => {
-    setShareError(shareTokenInfo.error);
-  }, [shareTokenInfo.error]);
+    if (shareTokenInfo.error) {
+      setShareError(shareTokenInfo.error);
+      return;
+    }
+    if (shareOverflow) {
+      setShareError(
+        'QR-код не помещает столько информации. Снимите часть групп или сократите факты.'
+      );
+      return;
+    }
+    setShareError(null);
+  }, [shareTokenInfo.error, shareOverflow]);
 
   const responseGroups = useMemo<ShareGroup[]>(() => {
     return groups
@@ -185,35 +203,48 @@ export default function QRPage() {
     }
   }, [profileId, profile, responseGroups, responseNonce, responseOpen]);
 
-  const responseLink = useMemo(() => {
-    if (!responseToken) return '';
-    if (!isReady && typeof window === 'undefined') return '';
-    return buildShareUrl(responseToken);
+  const responseLinkInfo = useMemo(() => {
+    if (!responseToken) {
+      return { link: '', overflow: false };
+    }
+    if (!isReady && typeof window === 'undefined') {
+      return { link: '', overflow: false };
+    }
+    const link = buildShareUrl(responseToken);
+    return { link, overflow: link.length > QR_VALUE_SAFE_LIMIT };
   }, [responseToken, isReady]);
 
-  const handleCopy = async () => {
-    if (!shareLink) return;
-    if (typeof navigator === 'undefined' || !navigator.clipboard) {
-      setCopyState('error');
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(shareLink);
-      setCopyState('copied');
-      setTimeout(() => setCopyState('idle'), 2000);
-    } catch {
-      setCopyState('error');
-      setTimeout(() => setCopyState('idle'), 2000);
-    }
-  };
+  const responseLink = responseLinkInfo.link;
+  const responseOverflow = responseLinkInfo.overflow;
 
-  const handleTokenPaste = async () => {
+  const handleTokenSubmit = async (rawInput?: string) => {
     if (typeof window === 'undefined') return;
     try {
-      const text = tokenInput.trim();
-      const value = text || (await navigator.clipboard.readText());
-      if (!value) return;
-      const token = extractShareToken(value) ?? value.trim();
+      setScanError(null);
+      setScanMessage(null);
+      let source = rawInput;
+      if (source != null) {
+        source = source.trim();
+        if (!source) {
+          setScanError('Введите ссылку или токен для обмена.');
+          setScanMessage(null);
+          return;
+        }
+      } else {
+        if (!navigator.clipboard) {
+          setScanError('Буфер обмена недоступен. Вставьте ссылку вручную.');
+          setScanMessage(null);
+          return;
+        }
+        source = (await navigator.clipboard.readText()).trim();
+        if (!source) {
+          setScanError('Буфер обмена пуст. Скопируйте ссылку и попробуйте снова.');
+          setScanMessage(null);
+          return;
+        }
+      }
+
+      const token = extractShareToken(source) ?? source.trim();
       let payload;
       try {
         payload = parseShareToken(token.trim());
@@ -231,7 +262,7 @@ export default function QRPage() {
       handleScan(token, payload);
       setTokenInput('');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Не удалось вставить токен.';
+      const message = error instanceof Error ? error.message : 'Не удалось обработать ссылку.';
       setScanError(message);
     }
   };
@@ -430,14 +461,6 @@ export default function QRPage() {
                 })}
               </ul>
             </div>
-            <ShareControls
-              onCopy={handleCopy}
-              copyState={copyState}
-              tokenInput={tokenInput}
-              onTokenInput={setTokenInput}
-              onPaste={handleTokenPaste}
-              copyDisabled={!shareLink}
-            />
           </section>
         ) : (
           <section className="mx-auto mt-6 flex w-full max-w-lg flex-col items-center gap-4 rounded-2xl bg-gray-800 px-6 py-8 shadow-lg">
@@ -448,6 +471,32 @@ export default function QRPage() {
             {scanMessage && !scanError && (
               <p className="text-center text-sm text-green-400 max-w-xs">{scanMessage}</p>
             )}
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleTokenSubmit(tokenInput);
+              }}
+              className="w-full space-y-2 rounded-xl border border-slate-700 bg-slate-900/40 p-4"
+            >
+              <label className="block text-xs text-slate-400">
+                Если QR не считывается, вставьте ссылку вручную
+              </label>
+              <input
+                type="text"
+                value={tokenInput}
+                onChange={(event) => setTokenInput(event.target.value)}
+                placeholder="https://innet.app/share?..."
+                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/40"
+              />
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  className="rounded-full bg-primary px-4 py-2 text-xs font-semibold text-slate-950 transition hover:bg-secondary"
+                >
+                  Сканировать ссылку
+                </button>
+              </div>
+            </form>
           </section>
         )}
 
@@ -466,14 +515,15 @@ export default function QRPage() {
       </div>
 
       {responseOpen && (
-      <ResponseModal
-        profile={profile}
-        groups={groups}
-        selection={responseSelection}
-        onToggle={handleResponseToggle}
-        onClose={closeResponseModal}
-        token={responseLink}
-      />
+        <ResponseModal
+          profile={profile}
+          groups={groups}
+          selection={responseSelection}
+          onToggle={handleResponseToggle}
+          onClose={closeResponseModal}
+          link={responseLink}
+          overflow={responseOverflow}
+        />
       )}
       {manualModalOpen && (
         <ManualContactModal
@@ -550,26 +600,14 @@ function ToggleBar({
 function ShareControls({
   onCopy,
   copyState,
-  tokenInput,
-  onTokenInput,
-  onPaste,
-  compact,
   copyDisabled,
 }: {
   onCopy: () => void;
   copyState: 'idle' | 'copied' | 'error';
-  tokenInput: string;
-  onTokenInput: (value: string) => void;
-  onPaste: () => void;
-  compact?: boolean;
   copyDisabled?: boolean;
 }) {
   return (
-    <div
-      className={`flex w-full flex-col items-center gap-2 ${
-        compact ? '' : 'sm:flex-row sm:items-center sm:justify-center'
-      }`}
-    >
+    <div className="flex w-full flex-col items-center gap-2 sm:flex-row sm:items-center sm:justify-center">
       <button
         onClick={onCopy}
         disabled={copyDisabled}
@@ -581,24 +619,6 @@ function ShareControls({
       >
         Скопировать ссылку
       </button>
-      {!compact && (
-        <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-          <input
-            type="text"
-            value={tokenInput}
-            onChange={(event) => onTokenInput(event.target.value)}
-            placeholder="Вставьте ссылку или токен вручную"
-            className="w-full rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-primary"
-          />
-          <button
-            onClick={onPaste}
-            type="button"
-            className="w-full rounded-full bg-primary px-4 py-2 text-sm font-medium text-background transition hover:bg-secondary sm:w-auto"
-          >
-            Вставить токен
-          </button>
-        </div>
-      )}
       {copyState === 'copied' && (
         <span className="text-xs text-green-400 sm:ml-2">Скопировано</span>
       )}
@@ -641,25 +661,27 @@ function ResponseModal({
   selection,
   onToggle,
   onClose,
-  token,
+  link,
+  overflow,
 }: {
   profile: ShareProfile;
   groups: FactGroup[];
   selection: string[];
   onToggle: (id: string) => void;
   onClose: () => void;
-  token: string;
+  link: string;
+  overflow: boolean;
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
 
   const handleCopy = async () => {
-    if (!token) return;
+    if (!link) return;
     if (typeof navigator === 'undefined' || !navigator.clipboard) {
       setCopyState('error');
       return;
     }
     try {
-      await navigator.clipboard.writeText(token);
+      await navigator.clipboard.writeText(link);
       setCopyState('copied');
       setTimeout(() => setCopyState('idle'), 2000);
     } catch {
@@ -724,23 +746,23 @@ function ResponseModal({
             <ShareControls
               onCopy={handleCopy}
               copyState={copyState}
-              tokenInput=""
-              onTokenInput={() => {}}
-              onPaste={() => {}}
-              compact
-              copyDisabled={!token}
+              copyDisabled={!link}
             />
             <div className="rounded-2xl bg-slate-900 p-5 shadow-inner">
-              {token ? (
+              {link && !overflow ? (
                 <QRCode
-                  value={token}
+                  value={link}
                   fgColor="#38BDF8"
                   bgColor="#020617"
                   style={{ width: 220, height: 220 }}
                 />
-              ) : (
+              ) : overflow ? (
                 <p className="w-48 text-center text-sm text-red-400">
-                  Слишком много данных для ответа. Снимите одну из групп.
+                  Слишком много данных для ответа. Снимите одну из групп или сократите факты.
+                </p>
+              ) : (
+                <p className="w-48 text-center text-sm text-slate-400">
+                  Выберите хотя бы одну группу, чтобы сформировать ответный QR-код.
                 </p>
               )}
             </div>
@@ -844,7 +866,24 @@ function ManualContactModal({
       });
       streamRef.current = stream;
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
+        const video = videoRef.current;
+        video.srcObject = stream;
+        video.playsInline = true;
+        const playVideo = () => {
+          const playPromise = video.play();
+          if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch(() => undefined);
+          }
+        };
+        if (video.readyState >= 2) {
+          playVideo();
+        } else {
+          const handleLoaded = () => {
+            playVideo();
+            video.removeEventListener('loadedmetadata', handleLoaded);
+          };
+          video.addEventListener('loadedmetadata', handleLoaded);
+        }
       }
       setCameraError(null);
       setCameraOpen(true);
@@ -861,7 +900,11 @@ function ManualContactModal({
   const closeCamera = () => {
     stopCameraStream(streamRef.current);
     streamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
     setCameraOpen(false);
+    setCameraError(null);
   };
 
   const retryCamera = () => {

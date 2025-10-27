@@ -27,6 +27,7 @@ export default defineConfig([
       ...nextPlugin.configs.recommended.rules,
       "@next/next/no-duplicate-head": "off",
       "@next/next/no-page-custom-font": "off",
+      "@typescript-eslint/triple-slash-reference": "off",
     },
   },
 ]);
