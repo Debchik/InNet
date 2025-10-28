@@ -23,10 +23,13 @@ import {
   mergeContactFromShare,
   parseShareToken,
   ShareGroup,
+  SharePayload,
   SHARE_PREFIX,
+  SHARE_VERSION,
   buildShareUrl,
   extractShareToken,
 } from '../../lib/share';
+import { sendExchange, fetchPendingExchanges } from '../../lib/exchangeClient';
 import { v4 as uuidv4 } from 'uuid';
 
 const QRScanner = dynamic(() => import('../../components/QRScanner'), { ssr: false });
@@ -69,9 +72,15 @@ export default function QRPage() {
   const [responseNonce, setResponseNonce] = useState(0);
   const [tokenInput, setTokenInput] = useState('');
   const [manualModalOpen, setManualModalOpen] = useState(false);
+  const [incomingExchange, setIncomingExchange] = useState<{
+    contactId: string;
+    message: string;
+  } | null>(null);
+  const [exchangeError, setExchangeError] = useState<string | null>(null);
 
   const lastTokenRef = useRef<string>('');
   const lastTokenTsRef = useRef<number>(0);
+  const incomingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setProfile(loadShareProfile());
@@ -127,6 +136,34 @@ export default function QRPage() {
       .filter((group) => selectedGroups.includes(group.id))
       .map(groupToShare);
   }, [groups, selectedGroups]);
+
+  const sendReciprocalExchange = useCallback(
+    async (targetProfileId: string) => {
+      if (!profileId || !targetProfileId || profileId === targetProfileId) return;
+      if (shareGroups.length === 0) return;
+      const payload: SharePayload = {
+        v: SHARE_VERSION,
+        owner: {
+          id: profileId,
+          name: profile.name || 'Без имени',
+          avatar: profile.avatar,
+          phone: profile.phone,
+          telegram: profile.telegram,
+          instagram: profile.instagram,
+        },
+        groups: shareGroups,
+        generatedAt: Date.now(),
+      };
+
+      const response = await sendExchange(profileId, targetProfileId, payload);
+      if (!response.ok) {
+        setExchangeError(response.message);
+        return;
+      }
+      setExchangeError(null);
+    },
+    [profileId, profile, shareGroups]
+  );
 
   const shareTokenInfo = useMemo(() => {
     if (!profileId) return { token: SHARE_PREFIX, error: null as string | null };
@@ -220,6 +257,74 @@ export default function QRPage() {
   const responseLink = responseLinkInfo.link;
   const responseOverflow = responseLinkInfo.overflow;
 
+  useEffect(() => {
+    if (!incomingExchange) return;
+    if (incomingTimerRef.current) {
+      clearTimeout(incomingTimerRef.current);
+    }
+    incomingTimerRef.current = setTimeout(() => {
+      setIncomingExchange(null);
+      if (incomingTimerRef.current) {
+        clearTimeout(incomingTimerRef.current);
+        incomingTimerRef.current = null;
+      }
+    }, 6000);
+
+    return () => {
+      if (incomingTimerRef.current) {
+        clearTimeout(incomingTimerRef.current);
+        incomingTimerRef.current = null;
+      }
+    };
+  }, [incomingExchange]);
+
+  useEffect(() => {
+    if (!profileId || mode !== 'generate') return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = async () => {
+      const result = await fetchPendingExchanges(profileId);
+      if (cancelled) return;
+
+      if (result.ok) {
+        if (result.exchanges.length > 0) {
+          for (const exchange of result.exchanges) {
+            try {
+              const outcome = mergeContactFromShare(exchange.payload);
+              setLastContactId(outcome.contact.id);
+              const message = outcome.wasCreated
+                ? `Контакт «${outcome.contact.name}» добавлен автоматически.`
+                : outcome.addedFacts > 0
+                  ? `Контакт «${outcome.contact.name}» обновлён: добавлено ${outcome.addedFacts} фактов.`
+                  : `Контакт «${outcome.contact.name}» уже есть в списке.`;
+              setIncomingExchange({ contactId: outcome.contact.id, message });
+            } catch (err) {
+              console.error('[qr] Failed to merge incoming exchange', err);
+            }
+          }
+          setExchangeError(null);
+        }
+      } else {
+        setExchangeError(result.message);
+      }
+
+      if (!cancelled) {
+        timer = setTimeout(poll, 5000);
+      }
+    };
+
+    void poll();
+
+    return () => {
+      cancelled = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+  }, [profileId, mode]);
+
   const handleTokenSubmit = async (rawInput?: string) => {
     if (typeof window === 'undefined') return;
     try {
@@ -296,6 +401,7 @@ export default function QRPage() {
       const { contact, wasCreated, addedFacts } = mergeContactFromShare(payload);
       setLastContactId(contact.id);
       setScanError(null);
+      void sendReciprocalExchange(payload.owner.id);
 
       if (wasCreated) {
         setScanMessage(`Контакт «${contact.name}» добавлен.`);
@@ -426,6 +532,37 @@ export default function QRPage() {
                 />
               )}
             </div>
+
+            {incomingExchange && (
+              <div className="w-full rounded-xl border border-primary/40 bg-primary/10 px-4 py-3 text-sm text-primary">
+                <p>{incomingExchange.message}</p>
+                <div className="mt-3 flex gap-3">
+                  <button
+                    type="button"
+                    className="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-slate-900 transition hover:bg-secondary"
+                    onClick={() => {
+                      router.push(`/app/contacts/${incomingExchange.contactId}`);
+                      setIncomingExchange(null);
+                    }}
+                  >
+                    Открыть контакт
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary transition hover:bg-primary/20"
+                    onClick={() => setIncomingExchange(null)}
+                  >
+                    Скрыть
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {exchangeError && (
+              <div className="w-full rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+                {exchangeError}
+              </div>
+            )}
 
             <div className="w-full space-y-3">
               <h2 className="text-center text-lg font-semibold text-slate-100">

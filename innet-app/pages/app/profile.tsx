@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, RefObject } from 'react';
 import Layout from '../../components/Layout';
 import { loadUsers, saveUsers } from '../../lib/storage';
+import { getSupabaseClient } from '../../lib/supabaseClient';
 import { syncProfileToSupabase } from '../../lib/profileSync';
 
 type ProfileInfo = {
@@ -53,11 +54,12 @@ const PRESET_AVATAR_LABELS: Record<string, string> = {
 export default function ProfilePage() {
   const [profile, setProfile] = useState<ProfileInfo | null>(null);
   const [isReady, setIsReady] = useState(false);
-  /* const [codeInput, setCodeInput] = useState('');
   const [verificationFeedback, setVerificationFeedback] =
     useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [isResending, setIsResending] = useState(false); */
+  const [isResending, setIsResending] = useState(false);
+  const supabase = useMemo(() => {
+    try { return getSupabaseClient(); } catch { return null; }
+  }, []);
   const [phoneInput, setPhoneInput] = useState('');
   const [telegramInput, setTelegramInput] = useState('');
   const [instagramInput, setInstagramInput] = useState('');
@@ -135,6 +137,47 @@ export default function ProfilePage() {
 
     setIsReady(true);
   }, []);
+
+  // Pull verification status from Supabase and reflect it locally
+  useEffect(() => {
+    const sync = async () => {
+      if (!supabase || !profile?.email) return;
+      const { data } = await supabase.auth.getUser();
+      const verified = Boolean(data.user?.email_confirmed_at);
+      if (verified !== profile.verified) {
+        setProfile((p) => (p ? { ...p, verified } : p));
+        try {
+          const users = loadUsers();
+          const updated = users.map((u) =>
+            u.email.trim().toLowerCase() === profile.email.trim().toLowerCase()
+              ? { ...u, verified }
+              : u
+          );
+          saveUsers(updated);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('innet_current_user_verified', verified ? 'true' : 'false');
+          }
+        } catch { /* ignore */ }
+      }
+    };
+    void sync();
+  }, [profile?.email, profile?.verified, supabase]);
+
+  const handleResendVerification = async () => {
+    if (!profile?.email || !supabase) return;
+    setVerificationFeedback(null);
+    setIsResending(true);
+    try {
+      const { error } = await supabase.auth.resend({ type: 'signup', email: profile.email });
+      if (error) throw error;
+      setVerificationFeedback({ type: 'success', text: 'Письмо с подтверждением отправлено.' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Не удалось отправить письмо.';
+      setVerificationFeedback({ type: 'error', text: msg });
+    } finally {
+      setIsResending(false);
+    }
+  };
 
   const stopAvatarStream = useCallback(() => {
     if (avatarStreamRef.current) {
@@ -629,73 +672,41 @@ const persistAvatar = useCallback(
               </div>
             </section>
 
-            {/*
-            <section className="rounded-xl bg-gray-800 p-6 shadow space-y-4">
+            <section className="rounded-xl bg-gray-800 p-6 shadow space-y-3">
               <h3 className="text-xl font-semibold">Подтверждение почты</h3>
               <p className="text-sm text-gray-400">
-                На адрес <span className="text-gray-200">{profile.email}</span> отправлен код
-                подтверждения. Введите его ниже, чтобы завершить активацию аккаунта.
+                Текущий статус: {profile.verified ? (
+                  <span className="text-emerald-300">подтверждена</span>
+                ) : (
+                  <span className="text-amber-300">не подтверждена</span>
+                )}
               </p>
-              {verificationFeedback && (
-                <div
-                  className={`rounded-md border px-4 py-3 text-sm ${
-                    verificationFeedback.type === 'success'
-                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
-                      : 'border-red-500/40 bg-red-500/10 text-red-200'
-                  }`}
-                >
-                  {verificationFeedback.text}
+              {!profile.verified && (
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void handleResendVerification()}
+                    disabled={isResending}
+                    className={`rounded-md border px-4 py-2 text-sm ${
+                      isResending
+                        ? 'border-gray-600 text-gray-400 cursor-not-allowed'
+                        : 'border-gray-600 text-gray-200 hover:border-primary hover:text-primary'
+                    }`}
+                  >
+                    {isResending ? 'Отправляем…' : 'Отправить письмо подтверждения'}
+                  </button>
+                  {verificationFeedback && (
+                    <span
+                      className={`text-sm ${
+                        verificationFeedback.type === 'success' ? 'text-emerald-300' : 'text-red-300'
+                      }`}
+                    >
+                      {verificationFeedback.text}
+                    </span>
+                  )}
                 </div>
               )}
-              {profile.verified ? (
-                <p className="text-sm text-emerald-300">Почта подтверждена. Спасибо!</p>
-              ) : (
-                <>
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={6}
-                      value={codeInput}
-                      onChange={(event) => {
-                        setCodeInput(event.target.value.replace(/\D/g, ''));
-                        setVerificationFeedback(null);
-                      }}
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary tracking-[0.4em] text-center text-lg"
-                      placeholder="Код"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleVerifyCode}
-                      disabled={isVerifying}
-                      className={`w-full sm:w-auto rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-                        isVerifying
-                          ? 'cursor-not-allowed bg-gray-600 text-gray-300'
-                          : 'bg-primary text-background hover:bg-secondary'
-                      }`}
-                    >
-                      {isVerifying ? 'Проверяем...' : 'Подтвердить'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleResendCode()}
-                      disabled={isResending}
-                      className={`w-full sm:w-auto rounded-md px-4 py-2 text-sm font-medium transition-colors ${
-                        isResending
-                          ? 'cursor-not-allowed border border-gray-700 текст-gray-400'
-                          : 'border border-gray-600 text-gray-200 hover:border-primary'
-                      }`}
-                    >
-                      {isResending ? 'Отправляем...' : 'Прислать код ещё раз'}
-                    </button>
-                  </div>
-                  <p className="text-xs text-gray-500">
-                    Не видите письмо? Проверьте папку «Спам» или запросите новый код.
-                  </p>
-                </>
-              )}
             </section>
-            */}
 
             <section className="rounded-xl bg-gray-800 p-6 shadow space-y-4">
               <h3 className="text-xl font-semibold">Контакты</h3>

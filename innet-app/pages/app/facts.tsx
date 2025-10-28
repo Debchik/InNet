@@ -11,6 +11,10 @@ import {
   createFact,
 } from '../../lib/storage';
 import { FACT_CATEGORY_CONFIG } from '../../lib/categories';
+import { fetchRemoteFacts, upsertRemoteFacts } from '../../lib/factsRemote';
+import { getOrCreateProfileId } from '../../lib/share';
+
+const FACT_SYNC_STORAGE_KEY = 'innet_fact_sync_enabled';
 const COLOR_OPTIONS = [
   { value: '#14F4FF', label: 'Лазурный' },
   { value: '#FF6BCE', label: 'Фуксия' },
@@ -33,7 +37,7 @@ type HoldTarget =
 /**
  * Facts management page. Users can create groups of facts and quickly
  * capture long-form facts straight from a phone without extra buttons.
- * The state persists in localStorage until backend integration is added.
+ * The state persists in localStorage with optional Supabase synchronization.
  */
 export default function FactsPage() {
   const [groups, setGroups] = useState<FactGroup[]>([]);
@@ -43,17 +47,89 @@ export default function FactsPage() {
   const [focusRequest, setFocusRequest] = useState<FocusRequest>(null);
   const [limitNotice, setLimitNotice] = useState<string | null>(null);
   const [holdTarget, setHoldTarget] = useState<HoldTarget | null>(null);
+  const [profileId, setProfileId] = useState('');
+  const [syncEnabled, setSyncEnabled] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const holdTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingSyncRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setGroups(loadFactGroups());
+    if (typeof window !== 'undefined') {
+      const storedSync = localStorage.getItem(FACT_SYNC_STORAGE_KEY);
+      setSyncEnabled(storedSync === 'true');
+      setProfileId(getOrCreateProfileId());
+    }
   }, []);
+
+  useEffect(() => {
+    if (!profileId) return;
+    let cancelled = false;
+
+    const loadRemoteFacts = async () => {
+      setSyncError(null);
+      setSyncLoading(true);
+      const response = await fetchRemoteFacts(profileId);
+      if (cancelled) return;
+      if (response.ok) {
+        if (response.syncEnabled) {
+          setGroups(response.groups);
+          saveFactGroups(response.groups);
+        }
+        setSyncEnabled(response.syncEnabled);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(
+            FACT_SYNC_STORAGE_KEY,
+            response.syncEnabled ? 'true' : 'false'
+          );
+        }
+      } else {
+        setSyncError(response.message);
+      }
+      setSyncLoading(false);
+    };
+
+    void loadRemoteFacts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profileId]);
 
   useEffect(() => () => {
     if (holdTimerRef.current) {
       clearTimeout(holdTimerRef.current);
     }
+    if (pendingSyncRef.current) {
+      clearTimeout(pendingSyncRef.current);
+      pendingSyncRef.current = null;
+    }
   }, []);
+
+  useEffect(() => {
+    if (!profileId || !syncEnabled) return;
+    if (pendingSyncRef.current) {
+      clearTimeout(pendingSyncRef.current);
+    }
+    pendingSyncRef.current = setTimeout(() => {
+      void upsertRemoteFacts(profileId, groups, true).then((result) => {
+        if (!result.ok) {
+          setSyncError(result.message);
+        }
+        if (result.ok) {
+          setSyncError(null);
+        }
+      });
+    }, 750);
+
+    return () => {
+      if (pendingSyncRef.current) {
+        clearTimeout(pendingSyncRef.current);
+        pendingSyncRef.current = null;
+      }
+    };
+  }, [groups, profileId, syncEnabled]);
 
   const availableCategories = useMemo(() => {
     const used = new Set(
@@ -124,6 +200,63 @@ export default function FactsPage() {
     setGroups(updated);
     saveFactGroups(updated);
     return createdId;
+  };
+
+  const handleSyncToggle = async () => {
+    if (syncLoading) return;
+    if (!profileId) {
+      setSyncError('Не удалось определить ваш идентификатор. Обновите страницу и попробуйте снова.');
+      return;
+    }
+    setSyncError(null);
+    const target = !syncEnabled;
+    setSyncLoading(true);
+
+    if (pendingSyncRef.current) {
+      clearTimeout(pendingSyncRef.current);
+      pendingSyncRef.current = null;
+    }
+
+    if (target) {
+      const remote = await fetchRemoteFacts(profileId);
+      if (!remote.ok) {
+        setSyncError(remote.message);
+        setSyncLoading(false);
+        return;
+      }
+
+      let nextGroups = groups;
+      if (remote.groups.length > 0) {
+        nextGroups = remote.groups;
+        setGroups(remote.groups);
+        saveFactGroups(remote.groups);
+      }
+
+      const upsert = await upsertRemoteFacts(profileId, nextGroups, true);
+      if (!upsert.ok) {
+        setSyncError(upsert.message);
+        setSyncLoading(false);
+        return;
+      }
+
+      setSyncEnabled(true);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(FACT_SYNC_STORAGE_KEY, 'true');
+      }
+    } else {
+      const upsert = await upsertRemoteFacts(profileId, groups, false);
+      if (!upsert.ok) {
+        setSyncError(upsert.message);
+        setSyncLoading(false);
+        return;
+      }
+      setSyncEnabled(false);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(FACT_SYNC_STORAGE_KEY, 'false');
+      }
+    }
+
+    setSyncLoading(false);
   };
 
   const handleUpdateFact = (groupId: string, factId: string, text: string) => {
@@ -254,6 +387,35 @@ export default function FactsPage() {
             Зажмите группу или факт, чтобы удалить его.
           </p>
         </div>
+
+        <div className="mb-6 flex flex-col gap-3 rounded-xl bg-gray-800 p-4 shadow md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-100">Синхронизация фактов</h2>
+            <p className="text-sm text-slate-400">
+              Включите, чтобы хранить факты в Supabase и автоматически получать их на других устройствах.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleSyncToggle}
+            disabled={syncLoading || !profileId}
+            className={`inline-flex items-center justify-center rounded-full px-5 py-2 text-sm font-semibold transition ${
+              syncEnabled
+                ? 'bg-primary text-slate-900 hover:bg-secondary'
+                : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+            } ${syncLoading || !profileId ? 'cursor-not-allowed opacity-60' : ''}`}
+          >
+            {syncLoading
+              ? 'Синхронизация...'
+              : syncEnabled
+                ? 'Выключить синхронизацию'
+                : 'Включить синхронизацию'}
+          </button>
+        </div>
+
+        {syncError && (
+          <p className="mb-6 text-sm text-red-400">{syncError}</p>
+        )}
 
         <div className="mb-8 rounded-xl bg-gray-800 p-4 shadow">
           <h2 className="mb-4 text-xl font-semibold">Добавить группу фактов</h2>

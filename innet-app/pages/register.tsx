@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, KeyboardEvent, MouseEvent, RefObject } from 'react';
 import { useForm } from 'react-hook-form';
 import { v4 as uuidv4 } from 'uuid';
@@ -13,6 +13,7 @@ import {
   UserAccount,
 } from '../lib/storage';
 import { syncProfileToSupabase } from '../lib/profileSync';
+import { getSupabaseClient } from '../lib/supabaseClient';
 import { FACT_CATEGORY_CONFIG, FACT_CATEGORY_LABELS } from '../lib/categories';
 
 type StepOneInputs = {
@@ -69,6 +70,13 @@ export default function Register() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const supabase = useMemo(() => {
+    try {
+      return getSupabaseClient();
+    } catch {
+      return null;
+    }
+  }, []);
 
   const categoryLabelMap = FACT_CATEGORY_LABELS;
 
@@ -83,6 +91,29 @@ export default function Register() {
     if (typeof navigator === 'undefined') return;
     setCameraSupported(Boolean(navigator.mediaDevices?.getUserMedia));
   }, []);
+
+  // If user returns from Google OAuth or already has a Supabase session, skip to step 2
+  useEffect(() => {
+    if (!supabase) return;
+    const primeFromSession = async () => {
+      const { data } = await supabase.auth.getUser();
+      const email = data.user?.email ?? '';
+      const fullName = (data.user?.user_metadata?.full_name as string | undefined) || '';
+      if (email) {
+        setCredentials({ email, password: '', confirmed: true });
+        if (fullName && !name) setName(fullName);
+        setStep(2);
+      }
+    };
+    void primeFromSession();
+    // also listen for changes
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      void primeFromSession();
+    });
+    return () => {
+      sub.subscription.unsubscribe();
+    };
+  }, [name, supabase]);
 
   const stopCameraStream = useCallback(() => {
     const stream = streamRef.current;
@@ -140,28 +171,7 @@ export default function Register() {
     };
   }, [isCameraOpen, stopCameraStream]);
 
-  const sendVerificationEmail = async (recipient: string, personName: string) => {
-    const response = await fetch('/api/send-confirmation', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: recipient, name: personName }),
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.json().catch(() => ({}));
-      const message =
-        typeof errorBody?.message === 'string'
-          ? errorBody.message
-          : 'Не удалось отправить код подтверждения. Проверьте настройки почты.';
-      throw new Error(message);
-    }
-
-    const data = (await response.json().catch(() => ({}))) as { previewUrl?: string; message?: string };
-    return data;
-  };
-
-
-  const handleStepOne = (data: StepOneInputs) => {
+  const handleStepOne = async (data: StepOneInputs) => {
     const trimmedEmail = data.email.trim().toLowerCase();
     const users = loadUsers();
     const alreadyExists = users.some(
@@ -174,8 +184,21 @@ export default function Register() {
       });
       return;
     }
-
     clearErrors();
+
+    // Try creating a Supabase auth user; if env missing, gracefully continue in local mode
+    try {
+      if (supabase) {
+        await supabase.auth.signUp({
+          email: trimmedEmail,
+          password: data.password,
+          options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent('/register')}` },
+        });
+      }
+    } catch (err) {
+      console.warn('[register] Supabase signUp failed, proceeding locally', err);
+    }
+
     setCredentials({ ...data, email: trimmedEmail, confirmed: true });
     setStep(2);
   };
@@ -398,6 +421,15 @@ export default function Register() {
     const avatarValue =
       avatar.type === 'preset' || avatar.type === 'upload' ? avatar.value : undefined;
 
+    // Try to read current Supabase user to infer verification state
+    let emailVerified = false;
+    try {
+      if (supabase) {
+        const { data } = await supabase.auth.getUser();
+        emailVerified = Boolean(data.user?.email_confirmed_at);
+      }
+    } catch {/* noop */}
+
     const user: UserAccount = {
       id: uuidv4(),
       email,
@@ -409,7 +441,7 @@ export default function Register() {
       categories: selectedCategories,
       factsByCategory: normalizedFacts,
       createdAt: Date.now(),
-      verified: false,
+      verified: emailVerified,
     };
 
     const users = loadUsers();
@@ -422,15 +454,7 @@ export default function Register() {
     setStepTwoErrors([]);
     setFactLimitMessage(null);
 
-    void sendVerificationEmail(user.email, user.name || 'InNet пользователь')
-      .then((result) => {
-        if (result?.previewUrl) {
-          console.info('[send-confirmation] Preview URL:', result.previewUrl);
-        }
-      })
-      .catch((error) => {
-        console.error('Не удалось отправить код подтверждения', error);
-      });
+    // Supabase отправит письмо подтверждения сам (если включено). Наше письмо больше не требуется.
 
     if (typeof window !== 'undefined') {
       localStorage.setItem('innet_logged_in', 'true');
@@ -439,7 +463,7 @@ export default function Register() {
       localStorage.setItem('innet_current_user_name', user.name);
       localStorage.setItem('innet_current_user_categories', JSON.stringify(user.categories));
       localStorage.setItem('innet_current_user_facts', JSON.stringify(user.factsByCategory));
-      localStorage.setItem('innet_current_user_verified', 'false');
+      localStorage.setItem('innet_current_user_verified', emailVerified ? 'true' : 'false');
       localStorage.setItem('innet_qr_select_all_groups', 'true');
       window.dispatchEvent(new Event('innet-auth-refresh'));
 
@@ -535,6 +559,20 @@ export default function Register() {
               >
                 Продолжить
               </button>
+              {supabase && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!supabase) return;
+                    const next = encodeURIComponent('/register?oauth=google');
+                    const redirectTo = `${window.location.origin}/auth/callback?next=${next}`;
+                    void supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } });
+                  }}
+                  className="w-full mt-2 border border-gray-600 text-gray-100 py-2 rounded-md hover:border-primary transition-colors"
+                >
+                  Зарегистрироваться через Google
+                </button>
+              )}
             </form>
           )}
 

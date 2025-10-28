@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import Layout from '../components/Layout';
-import { convertFactsToGroups, loadUsers, saveFactGroups } from '../lib/storage';
+import { convertFactsToGroups, loadUsers, saveFactGroups, saveUsers, type UserAccount } from '../lib/storage';
+import { getSupabaseClient } from '../lib/supabaseClient';
+import { v4 as uuidv4 } from 'uuid';
 
 /**
  * Login page. This simplistic implementation stores a flag in localStorage
@@ -15,6 +17,60 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const supabase = useMemo(() => {
+    try { return getSupabaseClient(); } catch { return null; }
+  }, []);
+
+  useEffect(() => {
+    if (!supabase) return;
+    const syncFromSession = async () => {
+      const { data } = await supabase.auth.getUser();
+      const sUser = data.user;
+      if (!sUser?.email) return;
+      const users = loadUsers();
+      let user = users.find((u) => u.email.trim().toLowerCase() === sUser.email!.trim().toLowerCase());
+      if (!user) {
+        user = {
+          id: uuidv4(),
+          email: sUser.email!,
+          password: uuidv4().slice(0,12),
+          name: (sUser.user_metadata?.full_name as string | undefined) || 'Без имени',
+          surname: undefined,
+          avatar: undefined,
+          avatarType: undefined,
+          categories: [],
+          factsByCategory: {},
+          phone: undefined,
+          telegram: undefined,
+          instagram: undefined,
+          createdAt: Date.now(),
+          verified: Boolean(sUser.email_confirmed_at),
+        } as UserAccount;
+        saveUsers([user, ...users]);
+      }
+
+      try {
+        localStorage.setItem('innet_logged_in', 'true');
+        localStorage.setItem('innet_current_user_id', user.id);
+        localStorage.setItem('innet_current_user_email', user.email);
+        localStorage.setItem('innet_current_user_name', user.name);
+        localStorage.setItem('innet_current_user_categories', JSON.stringify(user.categories ?? []));
+        localStorage.setItem('innet_current_user_facts', JSON.stringify(user.factsByCategory ?? {}));
+        localStorage.setItem('innet_current_user_verified', user.verified ? 'true' : 'false');
+        localStorage.setItem('innet_qr_select_all_groups', 'true');
+        window.dispatchEvent(new Event('innet-auth-refresh'));
+        saveFactGroups(convertFactsToGroups(user.factsByCategory ?? {}));
+      } catch (err) {
+        console.warn('[login] Failed to establish local session', err);
+      }
+      router.replace('/app/qr');
+    };
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      void syncFromSession();
+    });
+    void syncFromSession();
+    return () => { sub.subscription.unsubscribe(); };
+  }, [router, supabase]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -125,6 +181,20 @@ export default function Login() {
             </div>
             <button type="submit" className="w-full bg-primary text-background py-2 rounded-md hover:bg-secondary transition-colors">Войти</button>
           </form>
+          {supabase && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!supabase) return;
+                const next = encodeURIComponent('/app/qr');
+                const redirectTo = `${window.location.origin}/auth/callback?next=${next}`;
+                void supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } });
+              }}
+              className="mt-3 w-full border border-gray-600 text-gray-100 py-2 rounded-md hover:border-primary transition-colors"
+            >
+              Войти через Google
+            </button>
+          )}
           <p className="text-center text-sm text-gray-400 mt-4">
             Нет аккаунта? <Link href="/register" className="text-primary hover:underline">Зарегистрируйтесь</Link>
           </p>

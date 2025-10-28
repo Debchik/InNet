@@ -107,6 +107,11 @@ export function saveFactGroups(groups: FactGroup[]): void {
   localStorage.setItem(FACT_KEY, JSON.stringify(groups));
 }
 
+export function normalizeFactGroups(raw: unknown): FactGroup[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => normalizeFactGroup(item));
+}
+
 /**
  * Load contacts from localStorage. Returns an empty array if none exist.
  */

@@ -143,6 +143,10 @@ export function parseShareToken(token: string): SharePayload {
   return sanitizePayload(parsed);
 }
 
+export function normalizeSharePayload(payload: SharePayload): SharePayload {
+  return sanitizePayload(payload);
+}
+
 export function mergeContactFromShare(payload: SharePayload): MergeResult {
   const contacts = loadContacts();
   const existing = contacts.find((contact) => contact.remoteId === payload.owner.id);
