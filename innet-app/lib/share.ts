@@ -254,7 +254,10 @@ function sanitizePayload(payload: SharePayload): SharePayload {
     owner: {
       id: payload.owner?.id || uuidv4(),
       name: payload.owner?.name?.toString().trim().slice(0, 64) || 'Новый контакт',
-      avatar: payload.owner?.avatar,
+      // Do NOT include heavy or non-shareable avatar values into the QR payload.
+      // Data URLs, blob URLs or arbitrary strings explode token size and break QR generation.
+      // Only allow compact http(s) URLs of reasonable length; drop everything else.
+      avatar: sanitizeAvatar(payload.owner?.avatar),
       phone: sanitizeContactField(payload.owner?.phone),
       telegram: sanitizeContactField(payload.owner?.telegram),
       instagram: sanitizeContactField(payload.owner?.instagram),
@@ -364,6 +367,20 @@ function sanitizeContactField(value: unknown): string | undefined {
   const trimmed = value.trim();
   if (!trimmed) return undefined;
   return trimmed.slice(0, 64);
+}
+
+// Keep QR payloads small: only allow compact, shareable avatars.
+// - Disallow data: and blob: URLs
+// - Require http(s) URLs
+// - Limit length to avoid QR overflow even with many facts
+function sanitizeAvatar(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (/^(data:|blob:)/i.test(trimmed)) return undefined;
+  if (!/^https?:\/\//i.test(trimmed)) return undefined;
+  if (trimmed.length > 256) return undefined;
+  return trimmed;
 }
 
 function toUtf8Array(str: string): Uint8Array {
