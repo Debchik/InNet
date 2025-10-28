@@ -13,6 +13,9 @@ import {
   createContactNote,
   loadContacts,
   saveContacts,
+  CONTACT_NOTE_LIMIT,
+  CONTACT_NOTE_MAX,
+  ContactNote,
 } from '../../lib/storage';
 import {
   generateShareToken,
@@ -359,20 +362,16 @@ export default function QRPage() {
         groups: [],
       });
 
-      if (payload.note.trim()) {
-        baseContact.notes = [createContactNote(payload.note.trim())];
+      if (payload.notes.length) {
+        baseContact.notes = [...payload.notes];
       }
 
       saveContacts([baseContact, ...contacts]);
       setManualModalOpen(false);
       setScanError(null);
       setScanMessage(`Контакт «${baseContact.name}» добавлен вручную.`);
-      setLastContactId(baseContact.id);
-      setTimeout(() => {
-        router.push(`/app/contacts/${baseContact.id}`);
-      }, RESPONSE_OVERLAY_CLOSE_DELAY);
     },
-    [router]
+    []
   );
 
   if (!isReady) {
@@ -819,7 +818,7 @@ type ManualContactPayload = {
   phone: string;
   telegram: string;
   instagram: string;
-  note: string;
+  notes: ContactNote[];
   avatar: string | undefined;
 };
 
@@ -834,11 +833,14 @@ function ManualContactModal({
   const [phone, setPhone] = useState('');
   const [telegram, setTelegram] = useState('');
   const [instagram, setInstagram] = useState('');
-  const [note, setNote] = useState('');
+  const [noteDraft, setNoteDraft] = useState('');
+  const [notes, setNotes] = useState<ContactNote[]>([]);
+  const [noteError, setNoteError] = useState<string | null>(null);
   const [avatar, setAvatar] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -851,6 +853,26 @@ function ManualContactModal({
   const generatedAvatar = useMemo(() => generateColorAvatar(name), [name]);
   const previewAvatar = avatar ?? generatedAvatar;
 
+  const handleAddNote = () => {
+    const trimmed = noteDraft.trim();
+    if (!trimmed) {
+      setNoteError('Сначала введите текст заметки.');
+      return;
+    }
+    if (notes.length >= CONTACT_NOTE_MAX) {
+      setNoteError('Достигнут лимит заметок. Удалите одну, чтобы добавить новую.');
+      return;
+    }
+    const note = createContactNote(trimmed);
+    setNotes((prev) => [note, ...prev]);
+    setNoteDraft('');
+    setNoteError(null);
+  };
+
+  const handleRemoveNote = (noteId: string) => {
+    setNotes((prev) => prev.filter((item) => item.id !== noteId));
+  };
+
   const openCamera = async () => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setCameraError('Камера не поддерживается в этом браузере.');
@@ -858,6 +880,7 @@ function ManualContactModal({
       return;
     }
     try {
+      setCameraReady(false);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: 'user' },
@@ -869,6 +892,16 @@ function ManualContactModal({
         const video = videoRef.current;
         video.srcObject = stream;
         video.playsInline = true;
+        const handleReady = () => {
+          setCameraReady(true);
+          video.removeEventListener('loadedmetadata', handleReady);
+          video.removeEventListener('canplay', handleReady);
+        };
+        video.addEventListener('loadedmetadata', handleReady);
+        video.addEventListener('canplay', handleReady);
+        if (video.readyState >= 2 && video.videoWidth > 0) {
+          handleReady();
+        }
         const playVideo = () => {
           const playPromise = video.play();
           if (playPromise && typeof playPromise.catch === 'function') {
@@ -905,6 +938,7 @@ function ManualContactModal({
     }
     setCameraOpen(false);
     setCameraError(null);
+    setCameraReady(false);
   };
 
   const retryCamera = () => {
@@ -914,7 +948,7 @@ function ManualContactModal({
 
   const captureSelfie = () => {
     const video = videoRef.current;
-    if (!video || !video.videoWidth || !video.videoHeight) {
+    if (!cameraReady || !video || !video.videoWidth || !video.videoHeight) {
       setCameraError('Камера ещё не готова. Подождите секунду и попробуйте снова.');
       return;
     }
@@ -945,7 +979,7 @@ function ManualContactModal({
       phone,
       telegram,
       instagram,
-      note,
+      notes,
       avatar: previewAvatar,
     });
   };
@@ -1031,15 +1065,56 @@ function ManualContactModal({
                   placeholder="@username"
                 />
               </div>
-              <div className="space-y-2">
-                <label className="block text-sm text-slate-300">Заметка</label>
-                <textarea
-                  value={note}
-                  onChange={(event) => setNote(event.target.value)}
-                  rows={3}
-                  className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/40"
-                  placeholder="Где познакомились, что обсудили..."
-                />
+              <div className="space-y-2 md:col-span-2">
+                <label className="block text-sm text-slate-300">Заметки</label>
+                <div className="space-y-2">
+                  <textarea
+                    value={noteDraft}
+                    onChange={(event) => {
+                      setNoteDraft(event.target.value.slice(0, CONTACT_NOTE_LIMIT));
+                      setNoteError(null);
+                    }}
+                    rows={3}
+                    maxLength={CONTACT_NOTE_LIMIT}
+                    className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/40"
+                    placeholder="Где познакомились, что обсудили..."
+                  />
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-xs text-slate-400">
+                    <span>
+                      {noteDraft.length}/{CONTACT_NOTE_LIMIT}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleAddNote}
+                      className="rounded-full border border-slate-600 px-3 py-1 text-xs font-medium text-slate-200 transition hover:border-primary hover:text-primary"
+                    >
+                      Добавить заметку
+                    </button>
+                  </div>
+                </div>
+                {noteError && <p className="text-xs text-red-400">{noteError}</p>}
+                {notes.length > 0 && (
+                  <ul className="space-y-2">
+                    {notes.map((item) => (
+                      <li
+                        key={item.id}
+                        className="flex items-start justify-between rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100"
+                      >
+                        <div>
+                          <p>{item.text}</p>
+                          <p className="mt-1 text-xs text-slate-500">Заметка сохранится после добавления контакта</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveNote(item.id)}
+                          className="ml-3 text-xs text-red-400 transition hover:text-red-300"
+                        >
+                          удалить
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
             {error && <p className="text-sm text-red-400">{error}</p>}
@@ -1068,6 +1143,7 @@ function ManualContactModal({
           <CameraOverlay
             videoRef={videoRef}
             error={cameraError}
+            ready={cameraReady}
             onClose={closeCamera}
             onCapture={captureSelfie}
             onRetry={retryCamera}
@@ -1081,12 +1157,14 @@ function ManualContactModal({
 function CameraOverlay({
   videoRef,
   error,
+  ready,
   onClose,
   onCapture,
   onRetry,
 }: {
   videoRef: RefObject<HTMLVideoElement>;
   error: string | null;
+  ready: boolean;
   onClose: () => void;
   onCapture: () => void;
   onRetry: () => void;
@@ -1140,7 +1218,12 @@ function CameraOverlay({
               <button
                 type="button"
                 onClick={onCapture}
-                className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-secondary"
+                disabled={!ready}
+                className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
+                  ready
+                    ? 'bg-primary text-slate-950 hover:bg-secondary'
+                    : 'cursor-not-allowed bg-slate-700 text-slate-400'
+                }`}
               >
                 Сделать снимок
               </button>

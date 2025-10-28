@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Trash2 } from 'lucide-react';
 import Layout from '../../components/Layout';
 import {
@@ -10,13 +11,24 @@ import {
   createFact,
 } from '../../lib/storage';
 import { FACT_CATEGORY_CONFIG } from '../../lib/categories';
+const COLOR_OPTIONS = [
+  { value: '#14F4FF', label: 'Лазурный' },
+  { value: '#FF6BCE', label: 'Фуксия' },
+  { value: '#8B5CF6', label: 'Неоновый фиолетовый' },
+  { value: '#22D3EE', label: 'Бирюзовый лед' },
+  { value: '#FBBF24', label: 'Солнечный' },
+] as const;
 
 const MAX_GROUPS = 3;
 const MAX_FACTS_PER_GROUP = 5;
 const FACT_LIMIT_MESSAGE =
   'В этой группе достигнут лимит фактов. Удалите один, чтобы добавить новый.';
+const GROUP_NAME_LIMIT = 30;
 
 type FocusRequest = { groupId: string; factId: string } | null;
+type HoldTarget =
+  | { type: 'group'; groupId: string }
+  | { type: 'fact'; groupId: string; factId: string };
 
 /**
  * Facts management page. Users can create groups of facts and quickly
@@ -26,19 +38,21 @@ type FocusRequest = { groupId: string; factId: string } | null;
 export default function FactsPage() {
   const [groups, setGroups] = useState<FactGroup[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
+  const [newGroupColor, setNewGroupColor] = useState<string>(COLOR_OPTIONS[0].value);
   const [errors, setErrors] = useState('');
-  const [deleteMode, setDeleteMode] = useState(false);
-  const [pendingGroupDeletes, setPendingGroupDeletes] = useState<Set<string>>(
-    () => new Set<string>()
-  );
-  const [pendingFactDeletes, setPendingFactDeletes] = useState<Set<string>>(
-    () => new Set<string>()
-  );
   const [focusRequest, setFocusRequest] = useState<FocusRequest>(null);
   const [limitNotice, setLimitNotice] = useState<string | null>(null);
+  const [holdTarget, setHoldTarget] = useState<HoldTarget | null>(null);
+  const holdTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     setGroups(loadFactGroups());
+  }, []);
+
+  useEffect(() => () => {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+    }
   }, []);
 
   const availableCategories = useMemo(() => {
@@ -70,7 +84,6 @@ export default function FactsPage() {
   );
 
   const handleAddGroup = () => {
-    if (deleteMode) return;
     if (groups.length >= MAX_GROUPS) {
       setLimitNotice('Достигнут лимит созданных групп. Удалите существующую или используйте одну из них.');
       return;
@@ -79,20 +92,14 @@ export default function FactsPage() {
       setErrors('Свободных категорий нет. Удалите одну из существующих групп.');
       return;
     }
-    const group = createFactGroup(selectedCategory.label, selectedCategory.color);
+    const group = createFactGroup(selectedCategory.label.slice(0, GROUP_NAME_LIMIT), newGroupColor);
     const updated = [...groups, group];
     setGroups(updated);
     saveFactGroups(updated);
     setErrors('');
   };
 
-  const resetPendingDeletes = () => {
-    setPendingGroupDeletes(new Set<string>());
-    setPendingFactDeletes(new Set<string>());
-  };
-
   const handleAddFact = (groupId: string, text: string): string | null => {
-    if (deleteMode) return null;
     const targetGroup = groups.find((group) => group.id === groupId);
     if (!targetGroup) return null;
     if (targetGroup.facts.length >= MAX_FACTS_PER_GROUP) {
@@ -143,78 +150,110 @@ export default function FactsPage() {
     saveFactGroups(updated);
   };
 
-  const toggleGroupSelection = (groupId: string, checked: boolean) => {
-    setPendingGroupDeletes((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(groupId);
-      else next.delete(groupId);
-      return next;
-    });
-  };
-
-  const toggleFactSelection = (factId: string, checked: boolean) => {
-    setPendingFactDeletes((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(factId);
-      else next.delete(factId);
-      return next;
-    });
-  };
-
-  const handleDeleteClick = () => {
-    if (!deleteMode) {
-      setDeleteMode(true);
-      resetPendingDeletes();
-      return;
+  const clearHoldTimer = () => {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
     }
-
-    if (!pendingGroupDeletes.size && !pendingFactDeletes.size) {
-      setDeleteMode(false);
-      resetPendingDeletes();
-      return;
-    }
-
-    const updated = groups
-      .filter((group) => !pendingGroupDeletes.has(group.id))
-      .map((group) => ({
-        ...group,
-        facts: group.facts.filter((fact) => !pendingFactDeletes.has(fact.id)),
-      }));
-
-    setGroups(updated);
-    saveFactGroups(updated);
-    setDeleteMode(false);
-    resetPendingDeletes();
   };
+
+  const scheduleHold = (target: HoldTarget) => {
+    clearHoldTimer();
+    holdTimerRef.current = setTimeout(() => {
+      setHoldTarget(target);
+      holdTimerRef.current = null;
+    }, 400);
+  };
+
+  const cancelHoldPreparation = () => {
+    if (!holdTarget) {
+      clearHoldTimer();
+    }
+  };
+
+  const handleHoldConfirm = () => {
+    if (!holdTarget) return;
+    if (holdTarget.type === 'group') {
+      const updated = groups.filter((group) => group.id !== holdTarget.groupId);
+      setGroups(updated);
+      saveFactGroups(updated);
+    } else {
+      const updated = groups.map((group) => {
+        if (group.id !== holdTarget.groupId) return group;
+        return {
+          ...group,
+          facts: group.facts.filter((fact) => fact.id !== holdTarget.factId),
+        };
+      });
+      setGroups(updated);
+      saveFactGroups(updated);
+    }
+    setHoldTarget(null);
+    clearHoldTimer();
+  };
+
+  const handleHoldCancel = () => {
+    setHoldTarget(null);
+    clearHoldTimer();
+  };
+
+  const handleGroupPointerDown = (
+    event: ReactPointerEvent<HTMLElement>,
+    groupId: string
+  ) => {
+    if (holdTarget) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const element = event.target as HTMLElement;
+    if (element.closest('textarea')) return;
+    scheduleHold({ type: 'group', groupId });
+  };
+
+  const handleFactPointerDown = (
+    event: ReactPointerEvent<HTMLElement>,
+    groupId: string,
+    factId: string
+  ) => {
+    if (holdTarget) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const element = event.target as HTMLElement;
+    if (element.closest('textarea')) return;
+    scheduleHold({ type: 'fact', groupId, factId });
+  };
+
+  const handlePointerUp = () => {
+    if (!holdTarget) {
+      cancelHoldPreparation();
+    }
+  };
+
+  const interactionsLocked = Boolean(holdTarget);
+  const heldEntity = useMemo(() => {
+    if (!holdTarget) return null;
+    if (holdTarget.type === 'group') {
+      const group = groups.find((item) => item.id === holdTarget.groupId);
+      return group ? { label: group.name, type: 'group' as const } : null;
+    }
+    const group = groups.find((item) => item.id === holdTarget.groupId);
+    const fact = group?.facts.find((item) => item.id === holdTarget.factId);
+    if (!group || !fact) return null;
+    return { label: fact.text || 'Факт', type: 'fact' as const };
+  }, [groups, holdTarget]);
+
+  useEffect(() => {
+    if (holdTarget && !heldEntity) {
+      setHoldTarget(null);
+    }
+  }, [heldEntity, holdTarget]);
 
   return (
     <Layout>
-      <div
-        className={`px-4 py-8 max-w-5xl mx-auto transition ${
-          deleteMode ? 'bg-gray-950/40' : ''
-        }`}
-      >
-        <div className="mb-6 flex items-center justify-between">
+      <div className="px-4 py-8 max-w-5xl mx-auto transition">
+        <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-3xl font-bold">Мои факты</h1>
-          <button
-            type="button"
-            onClick={handleDeleteClick}
-            className={`flex items-center space-x-2 rounded-full border px-3 py-2 text-sm transition-colors ${
-              deleteMode
-                ? 'border-red-500 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:text-red-200'
-                : 'border-gray-600 text-gray-300 hover:border-gray-500 hover:text-gray-100'
-            }`}
-          >
-            <Trash2 className="h-4 w-4" />
-            <span>Удалить</span>
-          </button>
-        </div>
-
-        {deleteMode && (
-          <p className="mb-4 rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-sm text-gray-300">
-            Выберите факты или группы, после чего снова нажмите «Удалить», чтобы удалить выбранное.
+          <p className="text-xs text-slate-500">
+            Зажмите группу или факт, чтобы удалить его.
           </p>
-        )}
+        </div>
 
         <div className="mb-8 rounded-xl bg-gray-800 p-4 shadow">
           <h2 className="mb-4 text-xl font-semibold">Добавить группу фактов</h2>
@@ -231,9 +270,11 @@ export default function FactsPage() {
                   setSelectedCategoryId(event.target.value);
                   setErrors('');
                 }}
-                disabled={deleteMode || availableCategories.length === 0}
+                disabled={interactionsLocked || availableCategories.length === 0}
                 className={`w-full rounded-md border border-gray-600 bg-gray-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary ${
-                  deleteMode || availableCategories.length === 0 ? 'cursor-not-allowed opacity-50' : ''
+                  interactionsLocked || availableCategories.length === 0
+                    ? 'cursor-not-allowed opacity-50'
+                    : ''
                 }`}
               >
                 {availableCategories.length === 0 ? (
@@ -247,21 +288,38 @@ export default function FactsPage() {
                 )}
               </select>
             </div>
-            {selectedCategory && (
-              <div className="flex items-center gap-3 rounded-md border border-gray-600 bg-gray-700 px-3 py-2 text-sm text-gray-200">
-                <span>Предпросмотр</span>
-                <span
-                  className="h-8 w-8 rounded-full"
-                  style={{ backgroundColor: selectedCategory.color }}
-                  aria-hidden
-                />
+            <div>
+              <label className="mb-1 block text-sm" htmlFor="groupColor">
+                Цвет
+              </label>
+              <div className="grid grid-cols-5 gap-2">
+                {COLOR_OPTIONS.map((option) => {
+                  const active = option.value === newGroupColor;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      disabled={interactionsLocked}
+                      onClick={() => setNewGroupColor(option.value)}
+                      className={`h-10 w-16 rounded-md border transition ${
+                        interactionsLocked
+                          ? 'cursor-not-allowed border-gray-700 opacity-40'
+                          : active
+                            ? 'border-primary shadow-[0_0_0.75rem_rgba(20,244,255,0.6)]'
+                            : 'border-gray-700 hover:border-primary/60 hover:shadow-[0_0_0.75rem_rgba(20,244,255,0.35)]'
+                      }`}
+                      style={{ backgroundColor: option.value }}
+                      aria-label={`Выбрать цвет ${option.label}`}
+                    />
+                  );
+                })}
               </div>
-            )}
+            </div>
             <button
               onClick={handleAddGroup}
-              disabled={deleteMode || !selectedCategory || availableCategories.length === 0}
+              disabled={interactionsLocked || availableCategories.length === 0}
               className={`rounded-md px-5 py-2 text-sm font-medium transition-colors ${
-                deleteMode || !selectedCategory || availableCategories.length === 0
+                interactionsLocked || availableCategories.length === 0
                   ? 'cursor-not-allowed bg-primary/30 text-background/50'
                   : 'bg-primary text-background hover:bg-secondary'
               }`}
@@ -269,35 +327,28 @@ export default function FactsPage() {
               Добавить группу
             </button>
           </div>
-          {availableCategories.length === 0 && (
-            <p className="mt-2 text-xs text-slate-400">
-              Все категории уже используются. Удалите одну из групп, чтобы освободить место.
-            </p>
-          )}
         </div>
 
         <div className="space-y-6">
           {groups.map((group) => {
             const requestFocus = focusRequest?.groupId === group.id ? focusRequest.factId : null;
-            const groupMarked = pendingGroupDeletes.has(group.id);
             const factLimitReached = group.facts.length >= MAX_FACTS_PER_GROUP;
+            const groupHeld = holdTarget?.type === 'group' && holdTarget.groupId === group.id;
             return (
               <section
                 key={group.id}
+                onPointerDown={(event) => handleGroupPointerDown(event, group.id)}
+                onPointerUp={handlePointerUp}
+                onPointerLeave={handlePointerUp}
+                onPointerCancel={handlePointerUp}
                 className={`rounded-xl bg-gray-800 p-4 shadow transition ${
-                  deleteMode ? 'border border-gray-700 bg-gray-800/70' : ''
-                } ${groupMarked ? 'ring-1 ring-red-500/60' : ''}`}
+                  groupHeld ? 'ring-2 ring-red-500/60 bg-gray-900/60' : ''
+                }`}
               >
                 <header className="mb-4 flex items-start justify-between">
                   <h3 className="text-lg font-semibold" style={{ color: group.color }}>
                     {group.name}
                   </h3>
-                  <DeleteToggle
-                    active={deleteMode}
-                    checked={groupMarked}
-                    onChange={(checked) => toggleGroupSelection(group.id, checked)}
-                    label="Пометить группу для удаления"
-                  />
                 </header>
 
                 <div className="space-y-3">
@@ -305,7 +356,7 @@ export default function FactsPage() {
                     accentColor={group.color}
                     onCommit={(value) => handleAddFact(group.id, value)}
                     onFocusRequest={(factId) => setFocusRequest({ groupId: group.id, factId })}
-                    disabled={deleteMode}
+                    disabled={interactionsLocked}
                     limitReached={factLimitReached}
                     onLimitNotice={() => setLimitNotice(FACT_LIMIT_MESSAGE)}
                   />
@@ -322,9 +373,10 @@ export default function FactsPage() {
                         autoFocus={requestFocus === fact.id}
                         onFocusComplete={() => setFocusRequest(null)}
                         onChange={(value) => handleUpdateFact(group.id, fact.id, value)}
-                        deleteMode={deleteMode}
-                        selected={pendingFactDeletes.has(fact.id)}
-                        onSelectChange={(checked) => toggleFactSelection(fact.id, checked)}
+                        onPointerDown={(event) => handleFactPointerDown(event, group.id, fact.id)}
+                        onPointerUp={handlePointerUp}
+                        onPointerLeave={handlePointerUp}
+                        holding={holdTarget?.type === 'fact' && holdTarget.factId === fact.id}
                       />
                     ))
                   )}
@@ -334,6 +386,14 @@ export default function FactsPage() {
           })}
         </div>
       </div>
+      {holdTarget && heldEntity && (
+        <HoldOverlay
+          type={heldEntity.type}
+          label={heldEntity.label}
+          onConfirm={handleHoldConfirm}
+          onCancel={handleHoldCancel}
+        />
+      )}
       {limitNotice && <LimitDialog message={limitNotice} onClose={() => setLimitNotice(null)} />}
     </Layout>
   );
@@ -404,29 +464,19 @@ function FactQuickAdd({
     }
     const nextValue = event.target.value.slice(0, FACT_TEXT_LIMIT);
     setValue(nextValue);
-  };
 
-  const commitValue = useCallback(
-    (raw: string) => {
-      const trimmed = raw.trim();
-      if (!trimmed) {
-        return false;
-      }
-      const newId = onCommit(trimmed);
-      if (!newId) {
-        return false;
-      }
-      setValue('');
-      textareaRef.current?.blur();
-      onFocusRequest(newId);
-      return true;
-    },
-    [onCommit, onFocusRequest]
-  );
+    if (!nextValue.trim()) {
+      return;
+    }
 
-  const handleBlur = () => {
-    if (disabled || limitReached) return;
-    commitValue(value);
+    const newId = onCommit(nextValue);
+    if (!newId) {
+      return;
+    }
+
+    setValue('');
+    textareaRef.current?.blur();
+    onFocusRequest(newId);
   };
 
   const isDisabled = disabled || limitReached;
@@ -443,15 +493,8 @@ function FactQuickAdd({
       onKeyDown={(event) => {
         if (limitReached) {
           handleKeyDown(event);
-          return;
-        }
-        if (event.key === 'Enter' && !event.shiftKey) {
-          event.preventDefault();
-          commitValue(value || event.currentTarget.value);
-          return;
         }
       }}
-      onBlur={handleBlur}
       placeholder="Нажмите и начните печатать новый факт"
       disabled={disabled}
       readOnly={disabled || limitReached}
@@ -473,18 +516,20 @@ function EditableFactRow({
   accentColor,
   autoFocus,
   onFocusComplete,
-  deleteMode,
-  selected,
-  onSelectChange,
+  onPointerDown,
+  onPointerUp,
+  onPointerLeave,
+  holding,
 }: {
   value: string;
   onChange: (text: string) => void;
   accentColor: string;
   autoFocus: boolean;
   onFocusComplete: () => void;
-  deleteMode: boolean;
-  selected: boolean;
-  onSelectChange: (checked: boolean) => void;
+  onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerUp: () => void;
+  onPointerLeave: () => void;
+  holding: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -513,10 +558,14 @@ function EditableFactRow({
 
   return (
     <div
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+      onPointerLeave={onPointerLeave}
+      onPointerCancel={onPointerLeave}
       className={`flex items-start gap-3 rounded-md border border-gray-700 bg-gray-700/60 px-3 py-2 transition ${
-        deleteMode ? 'bg-gray-700/80 text-gray-200' : ''
-      } ${selected ? 'border-red-400 bg-red-500/10' : ''}`}
-      style={{ borderLeft: `4px solid ${deleteMode ? '#475569' : accentColor}` }}
+        holding ? 'border-red-400 bg-red-500/10 shadow-lg shadow-red-500/20' : ''
+      }`}
+      style={{ borderLeft: `4px solid ${accentColor}` }}
     >
       <textarea
         ref={textareaRef}
@@ -524,48 +573,11 @@ function EditableFactRow({
         onChange={handleChange}
         rows={1}
         maxLength={FACT_TEXT_LIMIT}
-        readOnly={deleteMode}
         className={`flex-1 resize-none bg-transparent text-sm text-gray-100 outline-none transition-colors ${
-          deleteMode ? 'cursor-not-allowed text-gray-400' : 'focus:text-gray-100'
+          holding ? 'cursor-default text-gray-200' : 'focus:text-gray-100'
         }`}
       />
-      <DeleteToggle
-        active={deleteMode}
-        checked={selected}
-        onChange={onSelectChange}
-        label="Пометить факт для удаления"
-      />
     </div>
-  );
-}
-
-function DeleteToggle({
-  active,
-  checked,
-  onChange,
-  label,
-}: {
-  active: boolean;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  label: string;
-}) {
-  if (!active) return null;
-
-  return (
-    <label className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-full border border-gray-600 text-xs transition hover:border-red-400 hover:text-red-400">
-      <span className="sr-only">{label}</span>
-      <input
-        type="checkbox"
-        className="peer sr-only"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-      />
-      <span
-        className="flex h-3 w-3 items-center justify-center rounded-full border border-gray-500 transition peer-checked:border-none peer-checked:bg-red-500"
-        aria-hidden
-      />
-    </label>
   );
 }
 
@@ -579,6 +591,50 @@ function LimitDialog({ message, onClose }: { message: string; onClose: () => voi
           className="mt-6 w-full rounded-md bg-primary py-2 text-sm font-medium text-background transition-colors hover:bg-secondary"
         >
           Понятно
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function HoldOverlay({
+  type,
+  label,
+  onConfirm,
+  onCancel,
+}: {
+  type: 'group' | 'fact';
+  label: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-start gap-6 bg-slate-950/85 px-6 pt-16 text-slate-100 backdrop-blur-sm">
+      <div className="flex flex-col items-center gap-4 text-center">
+        <span className="flex h-20 w-20 items-center justify-center rounded-full bg-red-500/20 text-red-300">
+          <Trash2 className="h-10 w-10" />
+        </span>
+        <div className="space-y-1">
+          <p className="text-lg font-semibold">
+            {type === 'group' ? 'Удалить группу?' : 'Удалить факт?'}
+          </p>
+          <p className="max-w-xs text-sm text-slate-300">{label}</p>
+        </div>
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="w-full rounded-full border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-100 sm:w-auto"
+        >
+          Отмена
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          className="w-full rounded-full bg-red-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-red-400 sm:w-auto"
+        >
+          Удалить
         </button>
       </div>
     </div>

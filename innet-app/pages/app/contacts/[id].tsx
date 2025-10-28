@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
-import type { ChangeEvent } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
 import Layout from '../../../components/Layout';
 import {
   Contact,
@@ -20,6 +20,12 @@ export default function ContactDetail() {
   const [contact, setContact] = useState<Contact | null>(null);
   const [noteText, setNoteText] = useState('');
   const [noteError, setNoteError] = useState<string | null>(null);
+  const [isEditingDetails, setIsEditingDetails] = useState(false);
+  const [editPhone, setEditPhone] = useState('');
+  const [editTelegram, setEditTelegram] = useState('');
+  const [editInstagram, setEditInstagram] = useState('');
+  const [editMessage, setEditMessage] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const handleNoteChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const raw = event.target.value;
@@ -43,6 +49,13 @@ export default function ContactDetail() {
     if (!found) return;
     setContact(found);
   }, [id]);
+
+  useEffect(() => {
+    if (!contact) return;
+    setEditPhone(contact.phone ?? '');
+    setEditTelegram(contact.telegram ?? '');
+    setEditInstagram(contact.instagram ?? '');
+  }, [contact]);
 
   const knownGroups = useMemo(() => loadFactGroups(), []);
 
@@ -86,6 +99,64 @@ export default function ContactDetail() {
     setContact(updated);
   };
 
+  const normalizeHandle = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    return trimmed.startsWith('@') ? trimmed : `@${trimmed}`;
+  };
+
+  const handleStartEdit = () => {
+    if (!contact) return;
+    setEditError(null);
+    setEditMessage(null);
+    setEditPhone(contact.phone ?? '');
+    setEditTelegram(contact.telegram ?? '');
+    setEditInstagram(contact.instagram ?? '');
+    setIsEditingDetails(true);
+  };
+
+  const handleCancelEdit = () => {
+    if (!contact) {
+      setIsEditingDetails(false);
+      return;
+    }
+    setIsEditingDetails(false);
+    setEditError(null);
+    setEditMessage(null);
+    setEditPhone(contact.phone ?? '');
+    setEditTelegram(contact.telegram ?? '');
+    setEditInstagram(contact.instagram ?? '');
+  };
+
+  const handleSaveDetails = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!contact) return;
+    setEditError(null);
+    setEditMessage(null);
+
+    const phoneValue = editPhone.trim();
+    const telegramValue = normalizeHandle(editTelegram);
+    const instagramValue = normalizeHandle(editInstagram);
+
+    const updated: Contact = {
+      ...contact,
+      phone: phoneValue ? phoneValue : undefined,
+      telegram: telegramValue,
+      instagram: instagramValue,
+      lastUpdated: Date.now(),
+    };
+
+    try {
+      updateContact(updated);
+      setContact(updated);
+      setIsEditingDetails(false);
+      setEditMessage('Контакты обновлены.');
+    } catch (error) {
+      console.error('Не удалось обновить контакт', error);
+      setEditError('Не удалось сохранить изменения. Попробуйте позже.');
+    }
+  };
+
   if (!contact) {
     return (
       <Layout>
@@ -124,16 +195,77 @@ export default function ContactDetail() {
           </div>
         </header>
 
-        {(contact.phone || contact.telegram || contact.instagram) && (
-          <div className="mt-5 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+        <div className="mt-5 rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-lg font-semibold text-slate-100">Контакты</h2>
-            <ul className="mt-2 space-y-1 text-sm text-slate-300">
-              {contact.phone && <li>Телефон: {contact.phone}</li>}
-              {contact.telegram && <li>Telegram: {contact.telegram}</li>}
-              {contact.instagram && <li>Instagram: {contact.instagram}</li>}
-            </ul>
+            <button
+              type="button"
+              onClick={() => (isEditingDetails ? handleCancelEdit() : handleStartEdit())}
+              className="self-start rounded-full border border-slate-600 px-3 py-1 text-xs font-semibold text-slate-200 transition hover:border-primary hover:text-primary"
+            >
+              {isEditingDetails ? 'Отмена' : 'Редактировать'}
+            </button>
           </div>
-        )}
+          {editMessage && !isEditingDetails && (
+            <p className="mt-2 text-xs text-emerald-300">{editMessage}</p>
+          )}
+          {editError && <p className="mt-2 text-xs text-red-400">{editError}</p>}
+          {isEditingDetails ? (
+            <form onSubmit={handleSaveDetails} className="mt-4 space-y-3">
+              <label className="space-y-1 text-sm text-slate-300">
+                <span>Телефон</span>
+                <input
+                  type="tel"
+                  value={editPhone}
+                  onChange={(event) => setEditPhone(event.target.value)}
+                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-primary"
+                  placeholder="Например, +7 (999) 123-45-67"
+                />
+              </label>
+              <label className="space-y-1 text-sm text-slate-300">
+                <span>Telegram</span>
+                <input
+                  type="text"
+                  value={editTelegram}
+                  onChange={(event) => setEditTelegram(event.target.value)}
+                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-primary"
+                  placeholder="@username"
+                />
+              </label>
+              <label className="space-y-1 text-sm text-slate-300">
+                <span>Instagram</span>
+                <input
+                  type="text"
+                  value={editInstagram}
+                  onChange={(event) => setEditInstagram(event.target.value)}
+                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-primary"
+                  placeholder="@nickname"
+                />
+              </label>
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  className="rounded-full border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-slate-500 hover:text-slate-100"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-secondary"
+                >
+                  Сохранить
+                </button>
+              </div>
+            </form>
+          ) : (
+            <ul className="mt-3 space-y-1 text-sm text-slate-300">
+              <li>Телефон: {contact.phone ? contact.phone : '—'}</li>
+              <li>Telegram: {contact.telegram ? contact.telegram : '—'}</li>
+              <li>Instagram: {contact.instagram ? contact.instagram : '—'}</li>
+            </ul>
+          )}
+        </div>
 
         <section className="mt-6 rounded-xl bg-slate-900/70 p-5 shadow">
           <h2 className="text-xl font-semibold text-slate-100">Факты, которыми поделился контакт</h2>

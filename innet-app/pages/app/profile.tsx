@@ -69,6 +69,7 @@ export default function ProfilePage() {
   const avatarStreamRef = useRef<MediaStream | null>(null);
   const [avatarCameraOpen, setAvatarCameraOpen] = useState(false);
   const [avatarCameraError, setAvatarCameraError] = useState<string | null>(null);
+  const [avatarCameraReady, setAvatarCameraReady] = useState(false);
   const [presetPickerOpen, setPresetPickerOpen] = useState(false);
 
   useEffect(() => {
@@ -234,6 +235,7 @@ const persistAvatar = useCallback(
       return;
     }
     try {
+      setAvatarCameraReady(false);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'user' } },
         audio: false,
@@ -244,14 +246,22 @@ const persistAvatar = useCallback(
       if (video) {
         video.srcObject = stream;
         video.playsInline = true;
+        const handleReady = () => {
+          setAvatarCameraReady(true);
+          video.removeEventListener('loadedmetadata', handleReady);
+          video.removeEventListener('canplay', handleReady);
+        };
+        video.addEventListener('loadedmetadata', handleReady);
+        video.addEventListener('canplay', handleReady);
         const playVideo = () => {
           const playPromise = video.play();
           if (playPromise && typeof playPromise.catch === 'function') {
             playPromise.catch(() => undefined);
           }
         };
-        if (video.readyState >= 2) {
+        if (video.readyState >= 2 && video.videoWidth > 0) {
           playVideo();
+          handleReady();
         } else {
           const handleLoaded = () => {
             playVideo();
@@ -276,11 +286,12 @@ const persistAvatar = useCallback(
     stopAvatarStream();
     setAvatarCameraOpen(false);
     setAvatarCameraError(null);
+    setAvatarCameraReady(false);
   }, [stopAvatarStream]);
 
   const handleCaptureAvatar = useCallback(() => {
     const video = avatarVideoRef.current;
-    if (!video || !video.videoWidth || !video.videoHeight) {
+    if (!avatarCameraReady || !video || !video.videoWidth || !video.videoHeight) {
       setAvatarCameraError('Камера ещё не готова. Попробуйте снова.');
       return;
     }
@@ -296,7 +307,7 @@ const persistAvatar = useCallback(
     const dataUrl = canvas.toDataURL('image/png');
     updateAvatar('upload', dataUrl);
     closeAvatarCamera();
-  }, [closeAvatarCamera, updateAvatar]);
+  }, [avatarCameraReady, closeAvatarCamera, updateAvatar]);
 
   const handleAvatarUpload = (event: ChangeEvent<HTMLInputElement>) => {
     setPresetPickerOpen(false);
@@ -770,6 +781,7 @@ const persistAvatar = useCallback(
         <AvatarCameraOverlay
           videoRef={avatarVideoRef}
           error={avatarCameraError}
+          ready={avatarCameraReady}
           onClose={closeAvatarCamera}
           onCapture={handleCaptureAvatar}
           onRetry={() => void openAvatarCamera()}
@@ -782,12 +794,14 @@ const persistAvatar = useCallback(
 function AvatarCameraOverlay({
   videoRef,
   error,
+  ready,
   onClose,
   onCapture,
   onRetry,
 }: {
   videoRef: RefObject<HTMLVideoElement>;
   error: string | null;
+  ready: boolean;
   onClose: () => void;
   onCapture: () => void;
   onRetry: () => void;
@@ -841,7 +855,12 @@ function AvatarCameraOverlay({
               <button
                 type="button"
                 onClick={onCapture}
-                className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-secondary"
+                disabled={!ready}
+                className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
+                  ready
+                    ? 'bg-primary text-slate-950 hover:bg-secondary'
+                    : 'cursor-not-allowed bg-slate-700 text-slate-400'
+                }`}
               >
                 Сделать снимок
               </button>

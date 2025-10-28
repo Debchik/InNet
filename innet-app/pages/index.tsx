@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import Layout from '../components/Layout';
 import QRCodeToggler from '../components/QRCodeToggler';
 import { ctaSlogans } from '../utils/slogans';
@@ -156,7 +157,10 @@ export default function Home() {
             {/* Placeholder illustration of the scanning UI */}
             <p className="text-sm text-gray-400 mb-4">Предпросмотр: экран сканирования</p>
             <div className="flex justify-center">
-              <div className="w-56 h-56 border-4 border-primary rounded-lg flex items-center justify-center text-gray-500">QR Scanner</div>
+              {/* Заменён плейсхолдер на реальную картинку лендинга.
+                  Предположение: изображение положено в public/landing.png
+                  Если файл имеет другое имя/путь, скажите — заменю. */}
+              <Image src="/landing.png" alt="Preview: экран сканирования" width={224} height={224} className="object-cover rounded-lg border-4 border-primary" />
             </div>
             <p className="text-xs text-gray-500 mt-4">Здесь появятся группы фактов и кнопка «Добавить в сеть»</p>
           </div>
