@@ -1,5 +1,5 @@
-import { promises as fs } from 'fs';
-import path from 'path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 
 export type QuickEngagementRecord = {
@@ -32,11 +32,12 @@ export function appendQuickEngagement(
 }
 
 async function persistEntry(entry: QuickEngagementRecord): Promise<void> {
-  await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
+  const directory = path.dirname(DATA_FILE);
+  await mkdir(directory, { recursive: true });
 
   let current: QuickEngagementRecord[] = [];
   try {
-    const raw = await fs.readFile(DATA_FILE, 'utf8');
+    const raw = await readFile(DATA_FILE, 'utf8');
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       current = parsed as QuickEngagementRecord[];
@@ -48,6 +49,5 @@ async function persistEntry(entry: QuickEngagementRecord): Promise<void> {
   }
 
   current.push(entry);
-  await fs.writeFile(DATA_FILE, JSON.stringify(current, null, 2), 'utf8');
+  await writeFile(DATA_FILE, JSON.stringify(current, null, 2), 'utf8');
 }
-
