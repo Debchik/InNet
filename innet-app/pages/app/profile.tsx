@@ -974,14 +974,6 @@ function formatPlural(value: number, one: string, two: string, many: string): st
   return `${value} ${pluralWord(value, one, two, many)}`;
 }
 
-function formatPlural(value: number, one: string, two: string, many: string): string {
-  const mod10 = value % 10;
-  const mod100 = value % 100;
-  if (mod10 === 1 && mod100 !== 11) return `${value} ${one}`;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return `${value} ${two}`;
-  return `${value} ${many}`;
-}
-
 function AvatarCameraOverlay({
   videoRef,
   error,
