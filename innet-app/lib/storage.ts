@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { FACT_CATEGORY_CONFIG, FACT_CATEGORY_LABELS, FACT_CATEGORY_COLORS } from './categories';
+import type { PlanId } from './plans';
 
 /**
  * Types describing the core domain entities for InNet.
@@ -19,7 +20,7 @@ export interface FactGroup {
   color: string;
   facts: Fact[];
 }
-export const FACT_TEXT_LIMIT = 128;
+export const FACT_TEXT_LIMIT = 4000;
 export const CONTACT_NOTE_LIMIT = 128;
 export const CONTACT_NOTE_MAX = 7;
 
@@ -72,6 +73,8 @@ export interface UserAccount {
   verified: boolean;
   pendingVerificationCode?: string;
   quickSignup?: boolean;
+  plan?: PlanId;
+  planActivatedAt?: number;
 }
 
 /* Key names used for persisting to localStorage */
@@ -215,8 +218,17 @@ export function createFactGroup(name: string, color: string): FactGroup {
 /**
  * Create a new fact within an existing group.
  */
-export function createFact(text: string): Fact {
-  const value = (text ?? '').toString().trim().slice(0, FACT_TEXT_LIMIT);
+export function createFact(text: string, limit?: number | null): Fact {
+  const normalized = (text ?? '').toString().trim();
+  let effectiveLimit: number | null;
+  if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) {
+    effectiveLimit = limit;
+  } else if (limit === null) {
+    effectiveLimit = null;
+  } else {
+    effectiveLimit = FACT_TEXT_LIMIT;
+  }
+  const value = effectiveLimit ? normalized.slice(0, effectiveLimit) : normalized;
   return { id: uuidv4(), text: value };
 }
 

@@ -7,6 +7,8 @@ import {
   loadContacts,
   saveContacts,
 } from './storage';
+import type { PrivacyLevel } from './privacy';
+import { mapPrivacyLevel } from './privacy';
 
 export const SHARE_PREFIX = 'innet-share:';
 export const SHARE_VERSION = 1;
@@ -36,6 +38,7 @@ export interface SharePayload {
   };
   groups: ShareGroup[];
   generatedAt: number;
+  privacy?: PrivacyLevel;
 }
 
 export interface MergeResult {
@@ -267,6 +270,7 @@ function sanitizePayload(payload: SharePayload): SharePayload {
       instagram: sanitizeContactField(payload.owner?.instagram),
     },
     generatedAt: typeof payload.generatedAt === 'number' ? payload.generatedAt : Date.now(),
+    privacy: mapPrivacyLevel(payload.privacy as string | null | undefined),
     groups: (payload.groups || []).map((group) => ({
       id: group?.id?.toString() || uuidv4(),
       name: group?.name?.toString().slice(0, 64) || 'Группа фактов',

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { Trash2 } from 'lucide-react';
 import Layout from '../../components/Layout';
+import OnboardingHint from '../../components/onboarding/OnboardingHint';
 import {
   FactGroup,
   FACT_TEXT_LIMIT,
@@ -13,6 +14,8 @@ import {
 import { FACT_CATEGORY_CONFIG } from '../../lib/categories';
 import { fetchRemoteFacts, upsertRemoteFacts } from '../../lib/factsRemote';
 import { getOrCreateProfileId } from '../../lib/share';
+import { usePlan } from '../../hooks/usePlan';
+import { isUnlimited } from '../../lib/plans';
 
 const FACT_SYNC_STORAGE_KEY = 'innet_fact_sync_enabled';
 const COLOR_OPTIONS = [
@@ -23,10 +26,6 @@ const COLOR_OPTIONS = [
   { value: '#FBBF24', label: 'Солнечный' },
 ] as const;
 
-const MAX_GROUPS = 3;
-const MAX_FACTS_PER_GROUP = 5;
-const FACT_LIMIT_MESSAGE =
-  'В этой группе достигнут лимит фактов. Удалите один, чтобы добавить новый.';
 const GROUP_NAME_LIMIT = 30;
 
 type FocusRequest = { groupId: string; factId: string } | null;
@@ -46,22 +45,95 @@ export default function FactsPage() {
   const [errors, setErrors] = useState('');
   const [focusRequest, setFocusRequest] = useState<FocusRequest>(null);
   const [limitNotice, setLimitNotice] = useState<string | null>(null);
-  const [holdTarget, setHoldTarget] = useState<HoldTarget | null>(null);
-  const [profileId, setProfileId] = useState('');
-  const [syncEnabled, setSyncEnabled] = useState(false);
-  const [syncLoading, setSyncLoading] = useState(false);
-  const [syncError, setSyncError] = useState<string | null>(null);
+const [holdTarget, setHoldTarget] = useState<HoldTarget | null>(null);
+const [profileId, setProfileId] = useState('');
+const [syncEnabled, setSyncEnabled] = useState(false);
+const [syncLoading, setSyncLoading] = useState(false);
+const [syncError, setSyncError] = useState<string | null>(null);
+const [isFinePointer, setIsFinePointer] = useState(false);
   const holdTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pendingSyncRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { entitlements } = usePlan();
+  const [newGroupName, setNewGroupName] = useState('');
+  const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const factGroupLimit = entitlements.factGroupLimit;
+  const factsPerGroupLimit = entitlements.factsPerGroupLimit;
+  const canUseCustomNames = entitlements.allowCustomGroupNames;
+  const factLimitMessage = useMemo(() => {
+    if (isUnlimited(factsPerGroupLimit)) {
+      return '';
+    }
+    return 'В этой группе достигнут лимит фактов. Удалите один, чтобы добавить новый.';
+  }, [factsPerGroupLimit]);
+  const sanitizeFactText = useCallback(
+    (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed) return '';
+      if (isUnlimited(entitlements.factLengthLimit)) {
+        return trimmed;
+      }
+      const limit = entitlements.factLengthLimit ?? FACT_TEXT_LIMIT;
+      return trimmed.slice(0, limit);
+    },
+    [entitlements.factLengthLimit]
+  );
+  const sanitizeGroupName = useCallback((value: string) => value.trim().slice(0, GROUP_NAME_LIMIT), []);
+
+  const handleRenameSubmit = useCallback(() => {
+    if (!renamingGroupId) return;
+    const sanitized = sanitizeGroupName(renameValue);
+    if (!sanitized) {
+      setRenameValue('');
+      return;
+    }
+    setGroups((current) => {
+      const updated = current.map((group) =>
+        group.id === renamingGroupId ? { ...group, name: sanitized } : group
+      );
+      saveFactGroups(updated);
+      return updated;
+    });
+    setRenamingGroupId(null);
+    setRenameValue('');
+  }, [renamingGroupId, renameValue, sanitizeGroupName]);
+
+  const handleRenameCancel = useCallback(() => {
+    setRenamingGroupId(null);
+    setRenameValue('');
+  }, []);
+
+useEffect(() => {
+  setGroups(loadFactGroups());
+  if (typeof window !== 'undefined') {
+    const storedSync = localStorage.getItem(FACT_SYNC_STORAGE_KEY);
+    setSyncEnabled(storedSync === 'true');
+    setProfileId(getOrCreateProfileId());
+  }
+}, []);
+
+useEffect(() => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+  const media = window.matchMedia('(pointer: fine)');
+  const update = () => setIsFinePointer(media.matches);
+  update();
+  const listener = () => update();
+  if (typeof media.addEventListener === 'function') {
+    media.addEventListener('change', listener);
+    return () => media.removeEventListener('change', listener);
+  }
+  media.addListener(listener);
+  return () => media.removeListener(listener);
+}, []);
 
   useEffect(() => {
-    setGroups(loadFactGroups());
-    if (typeof window !== 'undefined') {
-      const storedSync = localStorage.getItem(FACT_SYNC_STORAGE_KEY);
-      setSyncEnabled(storedSync === 'true');
-      setProfileId(getOrCreateProfileId());
+    if (!entitlements.allowSyncAcrossDevices && syncEnabled) {
+      setSyncEnabled(false);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(FACT_SYNC_STORAGE_KEY, 'false');
+      }
     }
-  }, []);
+  }, [entitlements.allowSyncAcrossDevices, syncEnabled]);
 
   useEffect(() => {
     if (!profileId) return;
@@ -73,16 +145,14 @@ export default function FactsPage() {
       const response = await fetchRemoteFacts(profileId);
       if (cancelled) return;
       if (response.ok) {
-        if (response.syncEnabled) {
+        if (response.syncEnabled && entitlements.allowSyncAcrossDevices) {
           setGroups(response.groups);
           saveFactGroups(response.groups);
         }
-        setSyncEnabled(response.syncEnabled);
+        const effectiveSync = response.syncEnabled && entitlements.allowSyncAcrossDevices;
+        setSyncEnabled(effectiveSync);
         if (typeof window !== 'undefined') {
-          localStorage.setItem(
-            FACT_SYNC_STORAGE_KEY,
-            response.syncEnabled ? 'true' : 'false'
-          );
+          localStorage.setItem(FACT_SYNC_STORAGE_KEY, effectiveSync ? 'true' : 'false');
         }
       } else {
         setSyncError(response.message);
@@ -95,7 +165,7 @@ export default function FactsPage() {
     return () => {
       cancelled = true;
     };
-  }, [profileId]);
+  }, [profileId, entitlements.allowSyncAcrossDevices]);
 
   useEffect(() => () => {
     if (holdTimerRef.current) {
@@ -160,35 +230,49 @@ export default function FactsPage() {
   );
 
   const handleAddGroup = () => {
-    if (groups.length >= MAX_GROUPS) {
-      setLimitNotice('Достигнут лимит созданных групп. Удалите существующую или используйте одну из них.');
+    if (!isUnlimited(factGroupLimit) && factGroupLimit !== null && groups.length >= factGroupLimit) {
+      setLimitNotice('Достигнут лимит групп фактов для текущего тарифа. Удалите одну из существующих или оформите InNet Pro.');
       return;
     }
-    if (!selectedCategory) {
-      setErrors('Свободных категорий нет. Удалите одну из существующих групп.');
-      return;
+
+    let baseName = '';
+    if (canUseCustomNames) {
+      const trimmed = newGroupName.trim();
+      if (trimmed) {
+        baseName = trimmed.slice(0, GROUP_NAME_LIMIT);
+      }
     }
-    const group = createFactGroup(selectedCategory.label.slice(0, GROUP_NAME_LIMIT), newGroupColor);
+
+    if (!baseName) {
+      if (!selectedCategory) {
+        setErrors('Свободных категорий нет. Введите собственное название группы.');
+        return;
+      }
+      baseName = selectedCategory.label.slice(0, GROUP_NAME_LIMIT);
+    }
+
+    const group = createFactGroup(baseName, newGroupColor);
     const updated = [...groups, group];
     setGroups(updated);
     saveFactGroups(updated);
     setErrors('');
+    setNewGroupName('');
   };
 
   const handleAddFact = (groupId: string, text: string): string | null => {
     const targetGroup = groups.find((group) => group.id === groupId);
     if (!targetGroup) return null;
-    if (targetGroup.facts.length >= MAX_FACTS_PER_GROUP) {
-      setLimitNotice(FACT_LIMIT_MESSAGE);
+    if (!isUnlimited(factsPerGroupLimit) && factsPerGroupLimit !== null && targetGroup.facts.length >= factsPerGroupLimit) {
+      setLimitNotice(factLimitMessage);
       return null;
     }
-    const content = text.trim().slice(0, FACT_TEXT_LIMIT);
+    const content = sanitizeFactText(text);
     if (!content) return null;
 
     let createdId: string | null = null;
     const updated = groups.map((group) => {
       if (group.id !== groupId) return group;
-      const newFact = createFact(content);
+      const newFact = createFact(content, entitlements.factLengthLimit);
       createdId = newFact.id;
       return { ...group, facts: [newFact, ...group.facts] };
     });
@@ -203,6 +287,10 @@ export default function FactsPage() {
   };
 
   const handleSyncToggle = async () => {
+    if (!entitlements.allowSyncAcrossDevices) {
+      setSyncError('Синхронизация доступна в InNet Pro. Оформите подписку, чтобы подключить автоматическое обновление на всех устройствах.');
+      return;
+    }
     if (syncLoading) return;
     if (!profileId) {
       setSyncError('Не удалось определить ваш идентификатор. Обновите страницу и попробуйте снова.');
@@ -267,7 +355,7 @@ export default function FactsPage() {
       let innerChanged = false;
       const facts = group.facts.map((fact) => {
         if (fact.id !== factId) return fact;
-        const sanitized = text.trim().slice(0, FACT_TEXT_LIMIT);
+        const sanitized = sanitizeFactText(text);
         if (fact.text === sanitized) return fact;
         innerChanged = true;
         return { ...fact, text: sanitized };
@@ -304,26 +392,31 @@ export default function FactsPage() {
     }
   };
 
-  const handleHoldConfirm = () => {
-    if (!holdTarget) return;
-    if (holdTarget.type === 'group') {
-      const updated = groups.filter((group) => group.id !== holdTarget.groupId);
-      setGroups(updated);
-      saveFactGroups(updated);
-    } else {
-      const updated = groups.map((group) => {
-        if (group.id !== holdTarget.groupId) return group;
-        return {
-          ...group,
-          facts: group.facts.filter((fact) => fact.id !== holdTarget.factId),
-        };
-      });
-      setGroups(updated);
-      saveFactGroups(updated);
-    }
-    setHoldTarget(null);
-    clearHoldTimer();
-  };
+const openQuickDelete = (target: HoldTarget) => {
+  clearHoldTimer();
+  setHoldTarget(target);
+};
+
+const handleHoldConfirm = () => {
+  if (!holdTarget) return;
+  if (holdTarget.type === 'group') {
+    const updated = groups.filter((group) => group.id !== holdTarget.groupId);
+    setGroups(updated);
+    saveFactGroups(updated);
+  } else {
+    const updated = groups.map((group) => {
+      if (group.id !== holdTarget.groupId) return group;
+      return {
+        ...group,
+        facts: group.facts.filter((fact) => fact.id !== holdTarget.factId),
+      };
+    });
+    setGroups(updated);
+    saveFactGroups(updated);
+  }
+  setHoldTarget(null);
+  clearHoldTimer();
+};
 
   const handleHoldCancel = () => {
     setHoldTarget(null);
@@ -378,14 +471,27 @@ export default function FactsPage() {
     }
   }, [heldEntity, holdTarget]);
 
+  const removalHint = isFinePointer
+    ? 'Используйте кнопку «Удалить» рядом с элементами или зажмите их, чтобы очистить.'
+    : 'Зажмите группу или факт, чтобы удалить его.';
+
   return (
     <Layout>
       <div className="px-4 py-8 max-w-5xl mx-auto transition">
+        <OnboardingHint
+          id="facts"
+          title="Здесь собираются ваши наборы фактов"
+          description="Подготовьте подборки описаний — для новых друзей, коллег и мероприятий. Перед показом QR вы сможете выбрать нужные группы."
+          bullets={[
+            'Start: до 3 групп по 5 фактов. Pro снимает ограничения и позволяет придумывать названия.',
+            'Факт сохраняется сразу после ввода — нет лишних кнопок.',
+            'Удалить группу или факт можно зажатием либо кнопкой «Удалить».',
+          ]}
+          className="mb-6"
+        />
         <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-3xl font-bold">Мои факты</h1>
-          <p className="text-xs text-slate-500">
-            Зажмите группу или факт, чтобы удалить его.
-          </p>
+          <p className="text-xs text-slate-500">{removalHint}</p>
         </div>
 
         <div className="mb-6 flex flex-col gap-3 rounded-xl bg-gray-800 p-4 shadow md:flex-row md:items-center md:justify-between">
@@ -398,12 +504,16 @@ export default function FactsPage() {
           <button
             type="button"
             onClick={handleSyncToggle}
-            disabled={syncLoading || !profileId}
+            disabled={syncLoading || !profileId || !entitlements.allowSyncAcrossDevices}
             className={`inline-flex items-center justify-center rounded-full px-5 py-2 text-sm font-semibold transition ${
               syncEnabled
                 ? 'bg-primary text-slate-900 hover:bg-secondary'
                 : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
-            } ${syncLoading || !profileId ? 'cursor-not-allowed opacity-60' : ''}`}
+            } ${
+              syncLoading || !profileId || !entitlements.allowSyncAcrossDevices
+                ? 'cursor-not-allowed opacity-60'
+                : ''
+            }`}
           >
             {syncLoading
               ? 'Синхронизация...'
@@ -421,6 +531,28 @@ export default function FactsPage() {
           <h2 className="mb-4 text-xl font-semibold">Добавить группу фактов</h2>
           {errors && <p className="mb-2 text-sm text-red-500">{errors}</p>}
           <div className="flex flex-col space-y-3 md:flex-row md:items-end md:space-x-4 md:space-y-0">
+            {canUseCustomNames && (
+              <div className="flex-1">
+                <label className="mb-1 block text-sm" htmlFor="groupCustomName">
+                  Свое название
+                </label>
+                <input
+                  id="groupCustomName"
+                  type="text"
+                  value={newGroupName}
+                  onChange={(event) => setNewGroupName(event.target.value)}
+                  maxLength={GROUP_NAME_LIMIT}
+                  disabled={interactionsLocked}
+                  className={`w-full rounded-md border border-gray-600 bg-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary ${
+                    interactionsLocked ? 'cursor-not-allowed opacity-50' : ''
+                  }`}
+                  placeholder="Например, «Тёплые знакомства»"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Оставьте поле пустым, чтобы использовать предустановленные категории.
+                </p>
+              </div>
+            )}
             <div className="flex-1">
               <label className="mb-1 block text-sm" htmlFor="groupCategory">
                 Категория
@@ -432,9 +564,11 @@ export default function FactsPage() {
                   setSelectedCategoryId(event.target.value);
                   setErrors('');
                 }}
-                disabled={interactionsLocked || availableCategories.length === 0}
+                disabled={
+                  interactionsLocked || (!canUseCustomNames && availableCategories.length === 0)
+                }
                 className={`w-full rounded-md border border-gray-600 bg-gray-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary ${
-                  interactionsLocked || availableCategories.length === 0
+                  interactionsLocked || (!canUseCustomNames && availableCategories.length === 0)
                     ? 'cursor-not-allowed opacity-50'
                     : ''
                 }`}
@@ -494,7 +628,10 @@ export default function FactsPage() {
         <div className="space-y-6">
           {groups.map((group) => {
             const requestFocus = focusRequest?.groupId === group.id ? focusRequest.factId : null;
-            const factLimitReached = group.facts.length >= MAX_FACTS_PER_GROUP;
+            const factLimitReached =
+              !isUnlimited(factsPerGroupLimit) &&
+              factsPerGroupLimit !== null &&
+              group.facts.length >= factsPerGroupLimit;
             const groupHeld = holdTarget?.type === 'group' && holdTarget.groupId === group.id;
             return (
               <section
@@ -507,10 +644,86 @@ export default function FactsPage() {
                   groupHeld ? 'ring-2 ring-red-500/60 bg-gray-900/60' : ''
                 }`}
               >
-                <header className="mb-4 flex items-start justify-between">
-                  <h3 className="text-lg font-semibold" style={{ color: group.color }}>
-                    {group.name}
-                  </h3>
+                <header className="mb-4 flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    {canUseCustomNames && renamingGroupId === group.id ? (
+                      <form
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          handleRenameSubmit();
+                        }}
+                        className="flex flex-col gap-2 sm:flex-row sm:items-center"
+                      >
+                        <input
+                          type="text"
+                          value={renameValue}
+                          onChange={(event) => setRenameValue(event.target.value)}
+                          className="w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary"
+                          maxLength={GROUP_NAME_LIMIT}
+                          autoFocus
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            type="submit"
+                            className="rounded-md bg-primary px-3 py-1 text-xs font-semibold text-background hover:bg-secondary"
+                          >
+                            Сохранить
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleRenameCancel}
+                            className="rounded-md border border-gray-600 px-3 py-1 text-xs font-semibold text-gray-200 hover:border-primary"
+                          >
+                            Отмена
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <h3 className="text-lg font-semibold" style={{ color: group.color }}>
+                        {group.name}
+                      </h3>
+                    )}
+                  </div>
+                  {renamingGroupId !== group.id && (
+                    <div className="flex items-center gap-2">
+                      {isFinePointer && (
+                        <button
+                          type="button"
+                          onClick={() => openQuickDelete({ type: 'group', groupId: group.id })}
+                          disabled={interactionsLocked}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onPointerUp={(event) => event.stopPropagation()}
+                          className={`flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                            interactionsLocked
+                              ? 'cursor-not-allowed border-gray-700 text-gray-500'
+                              : 'border-gray-600 text-red-300 hover:border-red-400 hover:text-red-300'
+                          }`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">Удалить</span>
+                        </button>
+                      )}
+                      {canUseCustomNames && (
+                        <button
+                          type="button"
+                          disabled={interactionsLocked}
+                          onClick={() => {
+                            setRenamingGroupId(group.id);
+                            setRenameValue(group.name);
+                          }}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onPointerUp={(event) => event.stopPropagation()}
+                          className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                            interactionsLocked
+                              ? 'cursor-not-allowed border-gray-700 text-gray-500'
+                              : 'border-gray-600 text-gray-200 hover:border-primary hover:text-primary'
+                          }`}
+                        >
+                          Переименовать
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </header>
 
                 <div className="space-y-3">
@@ -520,7 +733,12 @@ export default function FactsPage() {
                     onFocusRequest={(factId) => setFocusRequest({ groupId: group.id, factId })}
                     disabled={interactionsLocked}
                     limitReached={factLimitReached}
-                    onLimitNotice={() => setLimitNotice(FACT_LIMIT_MESSAGE)}
+                    onLimitNotice={() => setLimitNotice(factLimitMessage)}
+                    maxLength={
+                      isUnlimited(entitlements.factLengthLimit)
+                        ? null
+                        : entitlements.factLengthLimit ?? null
+                    }
                   />
                   {group.facts.length === 0 ? (
                     <p className="text-sm text-gray-400">
@@ -539,6 +757,16 @@ export default function FactsPage() {
                         onPointerUp={handlePointerUp}
                         onPointerLeave={handlePointerUp}
                         holding={holdTarget?.type === 'fact' && holdTarget.factId === fact.id}
+                        maxLength={
+                          isUnlimited(entitlements.factLengthLimit)
+                            ? null
+                            : entitlements.factLengthLimit ?? null
+                        }
+                        showQuickDelete={isFinePointer}
+                        onQuickDelete={() =>
+                          openQuickDelete({ type: 'fact', groupId: group.id, factId: fact.id })
+                        }
+                        quickDeleteDisabled={interactionsLocked}
                       />
                     ))
                   )}
@@ -568,6 +796,7 @@ function FactQuickAdd({
   disabled,
   limitReached,
   onLimitNotice,
+  maxLength,
 }: {
   onCommit: (value: string) => string | null;
   onFocusRequest: (factId: string) => void;
@@ -575,9 +804,14 @@ function FactQuickAdd({
   disabled: boolean;
   limitReached: boolean;
   onLimitNotice: () => void;
+  maxLength: number | null;
 }) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const effectiveLimit =
+    typeof maxLength === 'number' && Number.isFinite(maxLength) && maxLength > 0
+      ? maxLength
+      : null;
 
   useEffect(() => {
     adjustTextareaHeight(textareaRef.current);
@@ -624,7 +858,8 @@ function FactQuickAdd({
       }
       return;
     }
-    const nextValue = event.target.value.slice(0, FACT_TEXT_LIMIT);
+    const rawValue = event.target.value;
+    const nextValue = effectiveLimit ? rawValue.slice(0, effectiveLimit) : rawValue;
     setValue(nextValue);
 
     if (!nextValue.trim()) {
@@ -649,7 +884,7 @@ function FactQuickAdd({
       value={value}
       rows={1}
       onChange={handleChange}
-      maxLength={FACT_TEXT_LIMIT}
+      maxLength={effectiveLimit ?? undefined}
       onMouseDown={handleMouseDown}
       onFocus={handleFocus}
       onKeyDown={(event) => {
@@ -682,6 +917,10 @@ function EditableFactRow({
   onPointerUp,
   onPointerLeave,
   holding,
+  maxLength,
+  showQuickDelete,
+  onQuickDelete,
+  quickDeleteDisabled,
 }: {
   value: string;
   onChange: (text: string) => void;
@@ -692,8 +931,16 @@ function EditableFactRow({
   onPointerUp: () => void;
   onPointerLeave: () => void;
   holding: boolean;
+  maxLength: number | null;
+  showQuickDelete: boolean;
+  onQuickDelete: () => void;
+  quickDeleteDisabled: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const effectiveLimit =
+    typeof maxLength === 'number' && Number.isFinite(maxLength) && maxLength > 0
+      ? maxLength
+      : null;
 
   const handleResize = useCallback(() => {
     adjustTextareaHeight(textareaRef.current);
@@ -714,8 +961,19 @@ function EditableFactRow({
   }, [autoFocus, onFocusComplete]);
 
   const handleChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const next = event.target.value.slice(0, FACT_TEXT_LIMIT);
+    const raw = event.target.value;
+    const next = effectiveLimit ? raw.slice(0, effectiveLimit) : raw;
     onChange(next);
+  };
+
+  const handleQuickDelete = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    event.preventDefault();
+    onQuickDelete();
+  };
+
+  const handleQuickDeletePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
   };
 
   return (
@@ -734,11 +992,28 @@ function EditableFactRow({
         value={value}
         onChange={handleChange}
         rows={1}
-        maxLength={FACT_TEXT_LIMIT}
+        maxLength={effectiveLimit ?? undefined}
         className={`flex-1 resize-none bg-transparent text-sm text-gray-100 outline-none transition-colors ${
           holding ? 'cursor-default text-gray-200' : 'focus:text-gray-100'
         }`}
       />
+      {showQuickDelete && (
+        <button
+          type="button"
+          onClick={handleQuickDelete}
+          onPointerDown={handleQuickDeletePointerDown}
+          onPointerUp={(event) => event.stopPropagation()}
+          disabled={quickDeleteDisabled}
+          className={`shrink-0 rounded-full border p-1.5 transition ${
+            quickDeleteDisabled
+              ? 'cursor-not-allowed border-gray-700 text-gray-500'
+              : 'border-gray-600 text-gray-300 hover:border-red-400 hover:text-red-300'
+          }`}
+          aria-label="Удалить факт"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      )}
     </div>
   );
 }

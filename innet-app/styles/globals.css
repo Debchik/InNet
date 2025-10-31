@@ -15,21 +15,17 @@ html, body {
   @apply bg-background text-foreground antialiased;
 }
 
-/* Custom scrollbar styling for dark themes */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+/* Hide scrollbars while preserving scroll behavior */
+* {
+  scrollbar-width: none;
 }
 
-::-webkit-scrollbar-track {
-  background: theme('colors.background');
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
-::-webkit-scrollbar-thumb {
-  background: theme('colors.primary');
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: theme('colors.secondary');
+body {
+  -ms-overflow-style: none; /* IE/Edge legacy */
 }

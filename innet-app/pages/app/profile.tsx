@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, RefObject } from 'react';
 import Layout from '../../components/Layout';
+import OnboardingHint from '../../components/onboarding/OnboardingHint';
 import { loadUsers, saveUsers } from '../../lib/storage';
-import { getSupabaseClient } from '../../lib/supabaseClient';
 import { syncProfileToSupabase } from '../../lib/profileSync';
+import { usePlan } from '../../hooks/usePlan';
+import { usePrivacy, PrivacyLevel } from '../../hooks/usePrivacy';
+import { useReminders } from '../../hooks/useReminders';
+import { formatRelative } from '../../utils/time';
 
 type ProfileInfo = {
   id: string;
@@ -31,35 +35,24 @@ const PRESET_AVATAR_LABELS: Record<string, string> = {
   midnight: 'Midnight',
 };
 
-/* const sendVerificationEmail = async (recipient: string, personName: string) => {
-  const response = await fetch('/api/send-confirmation', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: recipient, name: personName }),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}));
-    const message =
-      typeof errorBody?.message === 'string'
-        ? errorBody.message
-        : 'Не удалось отправить письмо. Проверьте настройки почты.';
-    throw new Error(message);
-  }
-
-  const data = (await response.json().catch(() => ({}))) as { previewUrl?: string; message?: string };
-  return data;
-}; */
+const PRIVACY_COPY: Record<PrivacyLevel, { title: string; description: string }> = {
+  public: {
+    title: 'Показывать всем',
+    description: 'Телефон и соцсети видят все, кто сканирует ваш QR-код.',
+  },
+  'second-degree': {
+    title: 'Скрывать от третьего круга',
+    description: 'Личные данные доступны друзьям и друзьям ваших друзей, но скрыты глубже.',
+  },
+  'direct-only': {
+    title: 'Только прямые контакты',
+    description: 'Телефон и соцсети открываются только людям, с которыми вы напрямую обменялись контактами.',
+  },
+};
 
 export default function ProfilePage() {
   const [profile, setProfile] = useState<ProfileInfo | null>(null);
   const [isReady, setIsReady] = useState(false);
-  const [verificationFeedback, setVerificationFeedback] =
-    useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [isResending, setIsResending] = useState(false);
-  const supabase = useMemo(() => {
-    try { return getSupabaseClient(); } catch { return null; }
-  }, []);
   const [phoneInput, setPhoneInput] = useState('');
   const [telegramInput, setTelegramInput] = useState('');
   const [instagramInput, setInstagramInput] = useState('');
@@ -73,6 +66,42 @@ export default function ProfilePage() {
   const [avatarCameraError, setAvatarCameraError] = useState<string | null>(null);
   const [avatarCameraReady, setAvatarCameraReady] = useState(false);
   const [presetPickerOpen, setPresetPickerOpen] = useState(false);
+  const { entitlements } = usePlan();
+  const { level: privacyLevel, setLevel: setPrivacyLevel, options: privacyOptions } = usePrivacy(entitlements);
+  const displayPrivacyOptions = useMemo<PrivacyLevel[]>(() => {
+    if (entitlements.allowFullPrivacy) {
+      return privacyOptions;
+    }
+    const extended = new Set<PrivacyLevel>(privacyOptions);
+    extended.add('direct-only');
+    return Array.from(extended);
+  }, [entitlements.allowFullPrivacy, privacyOptions]);
+  const {
+    settings: reminderSettings,
+    updateSettings: updateReminderSettings,
+    permission: reminderPermission,
+    requestPermission: ensureReminderPermission,
+    triggerTestReminder,
+    nextReminderPreview,
+    lastReminderMeta,
+    activeSchedulesCount,
+    dailyLimit: reminderDailyLimit,
+  } = useReminders();
+  const [reminderEnabled, setReminderEnabled] = useState(reminderSettings.enabled);
+  const [reminderValue, setReminderValue] = useState(reminderSettings.cadence.value);
+  const [reminderUnit, setReminderUnit] = useState(reminderSettings.cadence.unit);
+  const [reminderFeedback, setReminderFeedback] = useState<{
+    type: 'success' | 'error' | 'info';
+    text: string;
+  } | null>(null);
+  const [isSavingReminders, setIsSavingReminders] = useState(false);
+  const [isTestingReminder, setIsTestingReminder] = useState(false);
+
+  useEffect(() => {
+    setReminderEnabled(reminderSettings.enabled);
+    setReminderValue(reminderSettings.cadence.value);
+    setReminderUnit(reminderSettings.cadence.unit);
+  }, [reminderSettings]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -100,8 +129,6 @@ export default function ProfilePage() {
       setPhoneInput(user.phone ?? '');
       setTelegramInput(user.telegram ?? '');
       setInstagramInput(user.instagram ?? '');
-      /* setCodeInput('');
-      setVerificationFeedback(null); */
     } else {
       const fallbackName = localStorage.getItem('innet_current_user_name') ?? '';
       const fallbackSurname = localStorage.getItem('innet_current_user_surname') ?? undefined;
@@ -138,47 +165,6 @@ export default function ProfilePage() {
     setIsReady(true);
   }, []);
 
-  // Pull verification status from Supabase and reflect it locally
-  useEffect(() => {
-    const sync = async () => {
-      if (!supabase || !profile?.email) return;
-      const { data } = await supabase.auth.getUser();
-      const verified = Boolean(data.user?.email_confirmed_at);
-      if (verified !== profile.verified) {
-        setProfile((p) => (p ? { ...p, verified } : p));
-        try {
-          const users = loadUsers();
-          const updated = users.map((u) =>
-            u.email.trim().toLowerCase() === profile.email.trim().toLowerCase()
-              ? { ...u, verified }
-              : u
-          );
-          saveUsers(updated);
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('innet_current_user_verified', verified ? 'true' : 'false');
-          }
-        } catch { /* ignore */ }
-      }
-    };
-    void sync();
-  }, [profile?.email, profile?.verified, supabase]);
-
-  const handleResendVerification = async () => {
-    if (!profile?.email || !supabase) return;
-    setVerificationFeedback(null);
-    setIsResending(true);
-    try {
-      const { error } = await supabase.auth.resend({ type: 'signup', email: profile.email });
-      if (error) throw error;
-      setVerificationFeedback({ type: 'success', text: 'Письмо с подтверждением отправлено.' });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Не удалось отправить письмо.';
-      setVerificationFeedback({ type: 'error', text: msg });
-    } finally {
-      setIsResending(false);
-    }
-  };
-
   const stopAvatarStream = useCallback(() => {
     if (avatarStreamRef.current) {
       avatarStreamRef.current.getTracks().forEach((track) => {
@@ -203,6 +189,49 @@ export default function ProfilePage() {
     if (!profile) return '';
     return [profile.name, profile.surname].filter(Boolean).join(' ').trim();
   }, [profile]);
+
+  const reminderPermissionLabel = useMemo(() => {
+    switch (reminderPermission) {
+      case 'granted':
+        return 'браузер разрешил уведомления';
+      case 'denied':
+        return 'браузер блокирует уведомления';
+      case 'default':
+        return 'разрешение ещё не запрошено';
+      default:
+        return 'уведомления не поддерживаются';
+    }
+  }, [reminderPermission]);
+
+  const cadencePreview = useMemo(() => {
+    const normalized = Math.max(1, Math.round(reminderValue || 1));
+    return reminderUnit === 'week'
+      ? formatPlural(normalized, 'неделю', 'недели', 'недель')
+      : formatPlural(normalized, 'месяц', 'месяца', 'месяцев');
+  }, [reminderUnit, reminderValue]);
+
+  const nextReminderText = useMemo(() => {
+    if (!reminderEnabled) {
+      return 'Напоминания выключены.';
+    }
+    if (!nextReminderPreview) {
+      return 'Запланируем, как только появятся актуальные контакты.';
+    }
+    try {
+      return new Date(nextReminderPreview).toLocaleString();
+    } catch {
+      return String(nextReminderPreview);
+    }
+  }, [nextReminderPreview, reminderEnabled]);
+
+  const lastReminderText = useMemo(() => {
+    if (!lastReminderMeta) {
+      return 'Ещё не было напоминаний.';
+    }
+    const relative = formatRelative(lastReminderMeta.at);
+    const absolute = new Date(lastReminderMeta.at).toLocaleString();
+    return `${lastReminderMeta.name} — ${relative} (${absolute})`;
+  }, [lastReminderMeta]);
 
 const normalizeHandle = (value: string) => {
   const trimmed = value.trim();
@@ -376,93 +405,91 @@ const persistAvatar = useCallback(
     updateAvatar(null);
   };
 
-  /* const handleVerifyCode = async () => {
-    if (!profile) return;
-    setVerificationFeedback(null);
-
-    if (profile.verified) {
-      setVerificationFeedback({ type: 'success', text: 'Почта уже подтверждена.' });
-      return;
-    }
-
-    const trimmedCode = codeInput.trim();
-    if (!trimmedCode) {
-      setVerificationFeedback({ type: 'error', text: 'Введите код из письма.' });
-      return;
-    }
-
-    setIsVerifying(true);
+  const handleSaveReminders = useCallback(async () => {
+    setReminderFeedback(null);
+    const maxValue = reminderUnit === 'week' ? 12 : 12;
+    const normalizedValue = Math.min(
+      maxValue,
+      Math.max(1, Math.round(reminderValue))
+    );
+    setReminderValue(normalizedValue);
+    setIsSavingReminders(true);
     try {
-      const response = await fetch('/api/verify-confirmation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: profile.email, code: trimmedCode }),
+      updateReminderSettings((prev) => ({
+        ...prev,
+        enabled: reminderEnabled,
+        cadence: {
+          value: normalizedValue,
+          unit: reminderUnit,
+        },
+      }));
+      let permissionState = reminderPermission;
+      if (reminderEnabled && permissionState === 'default') {
+        permissionState = await ensureReminderPermission();
+      }
+      const unitWord =
+        reminderUnit === 'week'
+          ? pluralWord(normalizedValue, 'неделю', 'недели', 'недель')
+          : pluralWord(normalizedValue, 'месяц', 'месяца', 'месяцев');
+      setReminderFeedback({
+        type: reminderEnabled ? (permissionState === 'granted' ? 'success' : 'info') : 'success',
+        text: reminderEnabled
+          ? permissionState === 'granted'
+            ? `Будем напоминать примерно раз в ${normalizedValue} ${unitWord} с небольшим разбросом, чтобы уведомления не приходили одновременно.`
+            : 'Напоминания включены. Разрешите уведомления браузера, чтобы получать пуши, либо держите вкладку открытой.'
+          : 'Напоминания отключены.',
       });
+    } catch (error) {
+      console.error('[profile] Failed to save reminder settings', error);
+      setReminderFeedback({
+        type: 'error',
+        text: 'Не удалось сохранить настройки напоминаний. Попробуйте ещё раз.',
+      });
+    } finally {
+      setIsSavingReminders(false);
+    }
+  }, [
+    ensureReminderPermission,
+    reminderEnabled,
+    reminderPermission,
+    reminderUnit,
+    reminderValue,
+    updateReminderSettings,
+  ]);
 
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { message?: string };
-        setVerificationFeedback({
+  const handleTestReminder = useCallback(async () => {
+    setReminderFeedback(null);
+    let permissionState = reminderPermission;
+    if (permissionState === 'default') {
+      permissionState = await ensureReminderPermission();
+    }
+    setIsTestingReminder(true);
+    try {
+      const contact = await triggerTestReminder();
+      if (!contact) {
+        setReminderFeedback({
           type: 'error',
-          text: body?.message ?? 'Не удалось подтвердить код. Попробуйте ещё раз.',
+          text: 'Добавьте хотя бы один контакт, чтобы протестировать напоминания.',
         });
         return;
       }
-
-      const users = loadUsers();
-      const updatedUsers = users.map((user) =>
-        isSameUser(user) ? { ...user, verified: true, pendingVerificationCode: undefined } : user
-      );
-      saveUsers(updatedUsers);
-
-      setProfile((prev) => (prev ? { ...prev, verified: true } : prev));
-      setVerificationFeedback({ type: 'success', text: 'Почта успешно подтверждена.' });
-      setCodeInput('');
-
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('innet_current_user_verified', 'true');
-        window.dispatchEvent(new Event('innet-refresh-notifications'));
-      }
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : 'Не удалось подтвердить код. Попробуйте позже.';
-      setVerificationFeedback({ type: 'error', text: message });
-    } finally {
-      setIsVerifying(false);
-    }
-  };
-
-  const handleResendCode = async () => {
-    if (!profile) return;
-    setVerificationFeedback(null);
-    setIsResending(true);
-    try {
-      const result = await sendVerificationEmail(
-        profile.email,
-        profile.name || 'InNet пользователь'
-      );
-      if (result?.previewUrl) {
-        console.info('[send-confirmation] Preview URL:', result.previewUrl);
-      }
-
-      if (!profile.verified && typeof window !== 'undefined') {
-        localStorage.setItem('innet_current_user_verified', 'false');
-        window.dispatchEvent(new Event('innet-refresh-notifications'));
-      }
-
-      setVerificationFeedback({
-        type: 'success',
-        text: 'Новый код отправлен. Проверьте почту.',
+      setReminderFeedback({
+        type: permissionState === 'granted' ? 'success' : 'info',
+        text:
+          permissionState === 'granted'
+            ? `Тестовое напоминание отправлено: ${contact.name}.`
+            : `Показали тестовое окно для ${contact.name}. Разрешите уведомления, чтобы пуши работали в фоне.`,
       });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Не удалось отправить код. Попробуйте позже.';
-      setVerificationFeedback({ type: 'error', text: message });
+      console.error('[profile] Failed to trigger test reminder', error);
+      setReminderFeedback({
+        type: 'error',
+        text: 'Не удалось запустить тест. Попробуйте позже.',
+      });
     } finally {
-      setIsResending(false);
+      setIsTestingReminder(false);
     }
-  }; */
+  }, [ensureReminderPermission, reminderPermission, triggerTestReminder]);
 
   const handleSaveContacts = () => {
     if (!profile) return;
@@ -557,6 +584,17 @@ const persistAvatar = useCallback(
   return (
     <Layout>
       <div className="px-4 py-8 max-w-3xl mx-auto w-full">
+        <OnboardingHint
+          id="profile"
+          title="Настройте визитку и приватность"
+          description="Добавьте имя, аватар, контакты и выберите уровень приватности — так собеседники будут понимать, как с вами связаться."
+          bullets={[
+            'Можно загрузить фото, выбрать пресет или сделать снимок в приложении.',
+            'Контактные данные показываются только при выбранном уровне приватности.',
+            'Подтверждение почты появится позже — сейчас аккаунт работает без этого шага.',
+          ]}
+          className="mb-6"
+        />
         <h1 className="text-3xl font-bold mb-6">Мой профиль</h1>
         {!isReady && (
           <div className="rounded-xl bg-gray-800 p-6 animate-pulse text-gray-500">
@@ -675,37 +713,159 @@ const persistAvatar = useCallback(
             <section className="rounded-xl bg-gray-800 p-6 shadow space-y-3">
               <h3 className="text-xl font-semibold">Подтверждение почты</h3>
               <p className="text-sm text-gray-400">
-                Текущий статус: {profile.verified ? (
-                  <span className="text-emerald-300">подтверждена</span>
-                ) : (
-                  <span className="text-amber-300">не подтверждена</span>
-                )}
+                Функция подтверждения почты временно недоступна. Как только мы её включим, появится уведомление и отдельная кнопка.
               </p>
-              {!profile.verified && (
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => void handleResendVerification()}
-                    disabled={isResending}
-                    className={`rounded-md border px-4 py-2 text-sm ${
-                      isResending
-                        ? 'border-gray-600 text-gray-400 cursor-not-allowed'
-                        : 'border-gray-600 text-gray-200 hover:border-primary hover:text-primary'
-                    }`}
-                  >
-                    {isResending ? 'Отправляем…' : 'Отправить письмо подтверждения'}
-                  </button>
-                  {verificationFeedback && (
-                    <span
-                      className={`text-sm ${
-                        verificationFeedback.type === 'success' ? 'text-emerald-300' : 'text-red-300'
+            </section>
+
+            <section className="rounded-xl bg-gray-800 p-6 shadow space-y-4">
+              <h3 className="text-xl font-semibold">Приватность контактов</h3>
+              <p className="text-sm text-gray-400">
+                Управляйте тем, кто видит ваши контактные данные при обмене QR-кодом.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {displayPrivacyOptions.map((level) => {
+                  const meta = PRIVACY_COPY[level];
+                  const allowed = privacyOptions.includes(level);
+                  const selected = privacyLevel === level;
+                  return (
+                    <button
+                      key={level}
+                      type="button"
+                      onClick={() => allowed && setPrivacyLevel(level)}
+                      disabled={!allowed}
+                      className={`rounded-xl border px-4 py-3 text-left transition ${
+                        selected
+                          ? 'border-primary bg-primary/10 text-white'
+                          : allowed
+                            ? 'border-gray-700 bg-gray-900/70 text-gray-200 hover:border-primary/70'
+                            : 'cursor-not-allowed border-gray-800 bg-gray-900/40 text-gray-500'
                       }`}
                     >
-                      {verificationFeedback.text}
-                    </span>
-                  )}
+                      <p className="text-sm font-semibold">{meta.title}</p>
+                      <p className="mt-1 text-xs text-gray-400">{meta.description}</p>
+                      {!allowed && (
+                        <span className="mt-3 inline-flex rounded-full bg-primary/20 px-3 py-1 text-xs font-semibold text-primary">
+                          Доступно в InNet Pro
+                        </span>
+                      )}
+                      {selected && (
+                        <span className="mt-3 inline-flex rounded-full bg-emerald-400/20 px-3 py-1 text-xs font-semibold text-emerald-200">
+                          Выбрано
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className="rounded-xl bg-gray-800 p-6 shadow space-y-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-xl font-semibold">Напоминания о людях</h3>
+                  <p className="text-sm text-gray-400">
+                    Попросим вас выйти на связь с кем-то из списка в случайный момент. Выберите базовый интервал
+                    (в неделях или месяцах) — система сама добавит разброс и не покажет больше двух напоминаний в день.
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 rounded-md bg-gray-900/40 px-3 py-2 text-sm text-gray-200">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-primary"
+                    checked={reminderEnabled}
+                    onChange={(event) => {
+                      setReminderEnabled(event.target.checked);
+                      setReminderFeedback(null);
+                    }}
+                  />
+                  <span>Включить</span>
+                </label>
+              </div>
+              <p className="text-xs text-gray-500">
+                Статус уведомлений браузера: {reminderPermissionLabel}.
+              </p>
+              {reminderFeedback && (
+                <div
+                  className={`rounded-md border px-4 py-3 text-sm ${
+                    reminderFeedback.type === 'success'
+                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+                      : reminderFeedback.type === 'info'
+                      ? 'border-primary/40 bg-primary/10 text-primary'
+                      : 'border-red-500/40 bg-red-500/10 text-red-200'
+                  }`}
+                >
+                  {reminderFeedback.text}
                 </div>
               )}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="text-sm text-gray-300">Интервал напоминаний</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={reminderUnit === 'week' ? 12 : 12}
+                    step={1}
+                    value={reminderValue}
+                    onChange={(event) => {
+                      const raw = Number(event.target.value);
+                      const next = Number.isNaN(raw) ? 1 : Math.max(1, raw);
+                      setReminderValue(next);
+                      setReminderFeedback(null);
+                    }}
+                    className="w-full rounded-md border border-gray-600 bg-gray-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-sm text-gray-300">Единица измерения</span>
+                  <select
+                    value={reminderUnit}
+                    onChange={(event) => {
+                      const nextUnit = event.target.value === 'month' ? 'month' : 'week';
+                      setReminderUnit(nextUnit);
+                      setReminderFeedback(null);
+                    }}
+                    className="w-full rounded-md border border-gray-600 bg-gray-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
+                  >
+                    <option value="week">недели</option>
+                    <option value="month">месяцы</option>
+                  </select>
+                </label>
+              </div>
+              <div className="rounded-md bg-gray-900/40 px-4 py-3 text-xs text-gray-400 space-y-1">
+                <p>Базовый интервал: {cadencePreview} (добавляем случайный разброс).</p>
+                <p>
+                  Активных контактов: {activeSchedulesCount}. В день не больше{' '}
+                  {formatPlural(reminderDailyLimit, 'напоминание', 'напоминания', 'напоминаний')}.
+                </p>
+                <p>Следующее напоминание: {nextReminderText}</p>
+                <p>Последнее напоминание: {lastReminderText}</p>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  type="button"
+                  onClick={() => void handleSaveReminders()}
+                  disabled={isSavingReminders}
+                  className={`w-full sm:w-auto rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+                    isSavingReminders
+                      ? 'cursor-not-allowed bg-gray-600 text-gray-300'
+                      : 'bg-primary text-background hover:bg-secondary'
+                  }`}
+                >
+                  {isSavingReminders ? 'Сохраняем...' : 'Сохранить напоминания'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleTestReminder()}
+                  disabled={isTestingReminder}
+                  className={`w-full sm:w-auto rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
+                    isTestingReminder
+                      ? 'cursor-not-allowed border-gray-600 text-gray-300'
+                      : 'border-primary/60 text-primary hover:bg-primary/10'
+                  }`}
+                >
+                  {isTestingReminder ? 'Запускаем...' : 'Запустить тест'}
+                </button>
+              </div>
             </section>
 
             <section className="rounded-xl bg-gray-800 p-6 shadow space-y-4">
@@ -800,6 +960,26 @@ const persistAvatar = useCallback(
       )}
     </Layout>
   );
+}
+
+function pluralWord(value: number, one: string, two: string, many: string): string {
+  const mod10 = value % 10;
+  const mod100 = value % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return two;
+  return many;
+}
+
+function formatPlural(value: number, one: string, two: string, many: string): string {
+  return `${value} ${pluralWord(value, one, two, many)}`;
+}
+
+function formatPlural(value: number, one: string, two: string, many: string): string {
+  const mod10 = value % 10;
+  const mod100 = value % 100;
+  if (mod10 === 1 && mod100 !== 11) return `${value} ${one}`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return `${value} ${two}`;
+  return `${value} ${many}`;
 }
 
 function AvatarCameraOverlay({

@@ -1,5 +1,5 @@
 import { useRouter } from 'next/router';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import Layout from '../../../components/Layout';
 import {
@@ -13,6 +13,9 @@ import {
   updateContact,
 } from '../../../lib/storage';
 import { formatRelative } from '../../../utils/time';
+import Link from 'next/link';
+import { usePlan } from '../../../hooks/usePlan';
+import { buildAiSuggestions } from '../../../lib/assistant';
 
 export default function ContactDetail() {
   const router = useRouter();
@@ -26,6 +29,10 @@ export default function ContactDetail() {
   const [editInstagram, setEditInstagram] = useState('');
   const [editMessage, setEditMessage] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const { entitlements } = usePlan();
+  const [copiedSuggestionId, setCopiedSuggestionId] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const copyTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleNoteChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const raw = event.target.value;
@@ -57,7 +64,22 @@ export default function ContactDetail() {
     setEditInstagram(contact.instagram ?? '');
   }, [contact]);
 
+  useEffect(() => {
+    setCopiedSuggestionId(null);
+  }, [contact?.id]);
+
+  useEffect(() => () => {
+    if (copyTimerRef.current) {
+      clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
+    }
+  }, []);
+
   const knownGroups = useMemo(() => loadFactGroups(), []);
+  const aiSuggestions = useMemo(
+    () => (contact && entitlements.allowAiSuggestions ? buildAiSuggestions(contact) : []),
+    [contact, entitlements.allowAiSuggestions]
+  );
 
   const handleDeleteContact = () => {
     if (!contact) return;
@@ -156,6 +178,31 @@ export default function ContactDetail() {
       setEditError('Не удалось сохранить изменения. Попробуйте позже.');
     }
   };
+
+  const handleCopySuggestion = useCallback(
+    async (suggestionId: string, text: string) => {
+      if (!text) return;
+      setAiError(null);
+      try {
+        if (!navigator?.clipboard?.writeText) {
+          throw new Error('Clipboard API unavailable');
+        }
+        await navigator.clipboard.writeText(text);
+        setCopiedSuggestionId(suggestionId);
+        if (copyTimerRef.current) {
+          clearTimeout(copyTimerRef.current);
+        }
+        copyTimerRef.current = setTimeout(() => {
+          setCopiedSuggestionId(null);
+          copyTimerRef.current = null;
+        }, 2500);
+      } catch (error) {
+        console.warn('[contact] Failed to copy suggestion', error);
+        setAiError('Не удалось скопировать текст. Выделите и скопируйте его вручную.');
+      }
+    },
+    []
+  );
 
   if (!contact) {
     return (
@@ -266,6 +313,63 @@ export default function ContactDetail() {
             </ul>
           )}
         </div>
+
+        {entitlements.allowAiSuggestions ? (
+          <section className="mt-6 rounded-xl border border-slate-800 bg-slate-900/70 p-5 shadow">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-100">ИИ-помощник</h2>
+                <p className="text-sm text-slate-400">
+                  Подсказывает, что написать контакту или как позвать на встречу. Выберите вариант и
+                  скопируйте текст одним нажатием.
+                </p>
+              </div>
+            </div>
+            {aiError && <p className="mt-3 text-xs text-red-400">{aiError}</p>}
+            <div className="mt-4 grid gap-4 md:grid-cols-3">
+              {aiSuggestions.map((suggestion) => (
+                <article
+                  key={suggestion.id}
+                  className="flex flex-col justify-between rounded-lg border border-slate-800 bg-slate-950/70 p-4"
+                >
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-slate-400">
+                      {suggestion.title}
+                    </p>
+                    <p className="mt-2 text-sm text-slate-200 whitespace-pre-wrap">
+                      {suggestion.text}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleCopySuggestion(suggestion.id, suggestion.text)}
+                    className={`mt-4 inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-semibold transition ${
+                      copiedSuggestionId === suggestion.id
+                        ? 'bg-emerald-400/20 text-emerald-200'
+                        : 'border border-slate-700 text-slate-200 hover:border-primary hover:text-primary'
+                    }`}
+                  >
+                    {copiedSuggestionId === suggestion.id ? 'Скопировано' : 'Скопировать текст'}
+                  </button>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : (
+          <section className="mt-6 rounded-xl border border-slate-800 bg-slate-900/70 p-5">
+            <h2 className="text-xl font-semibold text-slate-100">ИИ-помощник</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              ИИ-подсказки доступны в подписке InNet Pro. Получайте персональные идеи для сообщений и
+              встреч в один клик.
+            </p>
+            <Link
+              href="/register?plan=pro"
+              className="mt-4 inline-flex items-center justify-center rounded-full bg-primary px-4 py-2 text-xs font-semibold text-slate-900 transition hover:bg-secondary"
+            >
+              Оформить InNet Pro
+            </Link>
+          </section>
+        )}
 
         <section className="mt-6 rounded-xl bg-slate-900/70 p-5 shadow">
           <h2 className="text-xl font-semibold text-slate-100">Факты, которыми поделился контакт</h2>

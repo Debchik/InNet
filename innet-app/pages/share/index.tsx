@@ -12,6 +12,7 @@ import {
 } from '../../lib/share';
 import {
   convertFactsToGroups,
+  loadContacts,
   loadUsers,
   saveFactGroups,
   saveUsers,
@@ -19,6 +20,8 @@ import {
 } from '../../lib/storage';
 import { syncProfileToSupabase } from '../../lib/profileSync';
 import { v4 as uuidv4 } from 'uuid';
+import { usePlan } from '../../hooks/usePlan';
+import { isUnlimited } from '../../lib/plans';
 
 type PageStatus = 'loading' | 'ready' | 'adding' | 'added' | 'error';
 
@@ -47,6 +50,15 @@ export default function ShareLandingPage() {
   const [sharePayload, setSharePayload] = useState<SharePayload | null>(null);
   const [hasAccount, setHasAccount] = useState(false);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
+  const { entitlements } = usePlan();
+  const contactLimitMessage = useMemo(() => {
+    if (isUnlimited(entitlements.contactLimit)) return '';
+    const limit = entitlements.contactLimit ?? 0;
+    if (limit <= 0) {
+      return 'Лимит контактов для текущего тарифа исчерпан.';
+    }
+    return `В вашем тарифе доступно до ${limit} контактов первого круга. Удалите контакт или подключите InNet Pro для безлимита.`;
+  }, [entitlements.contactLimit]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -142,6 +154,22 @@ export default function ShareLandingPage() {
     async (mode: EngagementMode, userHint?: { email?: string; name?: string }) => {
       if (!sharePayload) return;
       try {
+        const existingContacts = loadContacts();
+        const remoteId = sharePayload.owner?.id;
+        if (
+          !isUnlimited(entitlements.contactLimit) &&
+          (entitlements.contactLimit ?? 0) > 0
+        ) {
+          const alreadyExists = remoteId
+            ? existingContacts.some((contact) => contact.remoteId === remoteId)
+            : false;
+          if (!alreadyExists && existingContacts.length >= (entitlements.contactLimit ?? 0)) {
+            setProgressMessage(null);
+            setStatus('ready');
+            setError(contactLimitMessage);
+            return;
+          }
+        }
         const result = mergeContactFromShare(sharePayload);
         setProgressMessage(`Контакт «${result.contact.name}» добавлен в вашу сеть.`);
         const userInfo = userHint ?? getCurrentUserSignature();
@@ -159,7 +187,7 @@ export default function ShareLandingPage() {
         setStatus('error');
       }
     },
-    [handleRecordEngagement, redirectToContact, sharePayload]
+    [contactLimitMessage, entitlements.contactLimit, handleRecordEngagement, redirectToContact, sharePayload]
   );
 
   const handleAddForExisting = useCallback(async () => {
@@ -387,6 +415,15 @@ function ExistingAccountCTA({
 
 function ShareSummary({ payload, groups }: { payload: SharePayload; groups: ShareGroup[] }) {
   const factsCount = useMemo(() => groups.reduce((acc, group) => acc + group.facts.length, 0), [groups]);
+  const privacyNote = useMemo(() => {
+    if (payload.privacy === 'direct-only') {
+      return 'Контакт скрывает свои личные данные для всех, кто не знаком напрямую. После встречи вы сможете обменяться контактами вручную.';
+    }
+    if (payload.privacy === 'second-degree') {
+      return 'Контакт показывает личные данные только друзьям и знакомым их знакомых. Возможно, часть информации скрыта.';
+    }
+    return null;
+  }, [payload.privacy]);
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 shadow-lg">
@@ -396,6 +433,11 @@ function ShareSummary({ payload, groups }: { payload: SharePayload; groups: Shar
       <p className="mt-2 text-sm text-slate-400">
         Они готовы поделиться {factsCount} фактами в {groups.length} группах. После регистрации вы сможете сохранить их и добавить заметки.
       </p>
+      {privacyNote && (
+        <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          {privacyNote}
+        </div>
+      )}
 
       {groups.length > 0 && (
         <div className="mt-6 grid gap-4 md:grid-cols-2">

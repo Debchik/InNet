@@ -5,6 +5,8 @@ import Layout from '../components/Layout';
 import { convertFactsToGroups, loadUsers, saveFactGroups, saveUsers, type UserAccount } from '../lib/storage';
 import { getSupabaseClient } from '../lib/supabaseClient';
 import { v4 as uuidv4 } from 'uuid';
+import { DEFAULT_PLAN } from '../lib/plans';
+import { setCurrentPlan } from '../lib/subscription';
 
 /**
  * Login page. This simplistic implementation stores a flag in localStorage
@@ -45,6 +47,8 @@ export default function Login() {
           instagram: undefined,
           createdAt: Date.now(),
           verified: Boolean(sUser.email_confirmed_at),
+          plan: DEFAULT_PLAN,
+          planActivatedAt: Date.now(),
         } as UserAccount;
         saveUsers([user, ...users]);
       }
@@ -60,6 +64,7 @@ export default function Login() {
         localStorage.setItem('innet_qr_select_all_groups', 'true');
         window.dispatchEvent(new Event('innet-auth-refresh'));
         saveFactGroups(convertFactsToGroups(user.factsByCategory ?? {}));
+        setCurrentPlan(user.plan ?? DEFAULT_PLAN);
       } catch (err) {
         console.warn('[login] Failed to establish local session', err);
       }
@@ -147,6 +152,7 @@ export default function Login() {
       }
 
       window.dispatchEvent(new Event('innet-auth-refresh'));
+      setCurrentPlan(user.plan ?? DEFAULT_PLAN);
     }
 
     router.push('/app/qr');
@@ -187,7 +193,10 @@ export default function Login() {
               onClick={() => {
                 if (!supabase) return;
                 const next = encodeURIComponent('/app/qr');
-                const redirectTo = `${window.location.origin}/auth/callback?next=${next}`;
+                const redirectTo = `${window.location.origin}/auth/callback?type=login&provider=google&next=${next}`;
+                try {
+                  window.sessionStorage.setItem('innet_oauth_redirect', '/app/qr');
+                } catch {/* ignore storage */}
                 void supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } });
               }}
               className="mt-3 w-full border border-gray-600 text-gray-100 py-2 rounded-md hover:border-primary transition-colors"

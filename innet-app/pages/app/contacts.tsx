@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Layout from '../../components/Layout';
+import OnboardingHint from '../../components/onboarding/OnboardingHint';
 import { loadContacts } from '../../lib/storage';
 import Link from 'next/link';
+import { usePlan } from '../../hooks/usePlan';
+import { isUnlimited } from '../../lib/plans';
 
 /**
  * Contacts list page. Displays all contacts sorted by most recent first,
@@ -12,6 +15,19 @@ export default function ContactsPage() {
   const [contacts, setContacts] = useState(loadContacts());
   const [query, setQuery] = useState('');
   const [filtered, setFiltered] = useState(contacts);
+  const { entitlements } = usePlan();
+  const contactLimitInfo = useMemo(() => {
+    if (isUnlimited(entitlements.contactLimit)) {
+      return { text: 'Контакты без ограничений', reached: false };
+    }
+    const limit = entitlements.contactLimit ?? 0;
+    const count = contacts.length;
+    const reached = count >= limit;
+    return {
+      text: `${count}/${limit} контактов первого круга`,
+      reached,
+    };
+  }, [contacts.length, entitlements.contactLimit]);
 
   useEffect(() => {
     setContacts(loadContacts());
@@ -30,7 +46,28 @@ export default function ContactsPage() {
   return (
     <Layout>
       <div className="px-4 py-8 max-w-5xl mx-auto">
-        <h1 className="text-3xl font-bold mb-6">Мои контакты</h1>
+        <OnboardingHint
+          id="contacts"
+          title="Все знакомые — в одном месте"
+          description="После обмена QR-кодом контакт появится здесь. Добавляйте заметки, чтобы помнить, о чём договорились."
+          bullets={[
+            'Новые записи помечаются бейджем «New» в течение недели.',
+            'Найдите человека по имени — поиск обновляется на лету.',
+            'Про тариф Start напоминаем лимит 50 контактов; Pro даёт безлимит.',
+          ]}
+          className="mb-6"
+        />
+        <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
+          <h1 className="text-3xl font-bold">Мои контакты</h1>
+          <p
+            className={`text-sm ${
+              contactLimitInfo.reached ? 'text-red-400' : 'text-gray-400'
+            }`}
+          >
+            {contactLimitInfo.text}
+            {contactLimitInfo.reached ? ' — лимит достигнут' : ''}
+          </p>
+        </div>
         <div className="mb-4">
           <input
             type="text"

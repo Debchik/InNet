@@ -15,6 +15,39 @@ Set these variables for both the Next.js client and API routes:
 The service role key is only used inside Next.js API routes and must **never**
 be exposed to the browser.
 
+## Email confirmations
+
+Supabase can now handle account confirmation emails for you—no custom SMTP
+code lives in the app anymore. New sign ups trigger an email automatically,
+and users can resend it from the profile page via the Supabase client.
+
+1. In the Supabase dashboard open **Authentication → Providers → Email** and
+   enable *Confirm email*. This enforces the verification step before a user
+   can sign in with email/password.
+2. Still under **Authentication**, open **Settings → Email** and configure an SMTP
+   provider (Resend, Mailgun, AWS SES, etc.). Fill out **Sender email**, host,
+   port, username and password; Supabase will use these credentials to send the
+   confirmation messages.
+3. Set the project **Site URL** (Authentication → Settings → General) to the
+   public origin of this app (e.g. `https://app.example.com`). Add the
+   development URL (`https://localhost:3000`) to **Additional Redirect URLs**.
+   The registration flow redirects to `/auth/callback`, so include
+   `https://<your-domain>/auth/callback` (and the local equivalent) if you use
+   strict allowlists.
+4. Optionally customise the **Confirm signup** email template so the copy matches
+   your branding. Only the body changes are required—the app handles the
+   redirect link.
+
+After these steps:
+
+- The registration form calls `supabase.auth.signUp(...)` with a
+  `emailRedirectTo` pointing at `/auth/callback`, so the user is routed back to
+  the app after clicking the confirmation link.
+- The profile page exposes an *Отправить письмо подтверждения* button that
+  invokes `supabase.auth.resend({ type: 'signup', email })`.
+- If Supabase is unreachable the UI continues to work locally, but the app
+  surfaces a warning so you can revisit the SMTP setup.
+
 ## Tables
 
 ### `fact_collections`

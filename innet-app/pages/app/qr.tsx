@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import QRCode from 'react-qr-code';
 import Layout from '../../components/Layout';
+import OnboardingHint from '../../components/onboarding/OnboardingHint';
 import {
   FactGroup,
   loadFactGroups,
@@ -31,6 +32,9 @@ import {
 } from '../../lib/share';
 import { sendExchange, fetchPendingExchanges } from '../../lib/exchangeClient';
 import { v4 as uuidv4 } from 'uuid';
+import { usePlan } from '../../hooks/usePlan';
+import { usePrivacy } from '../../hooks/usePrivacy';
+import { isUnlimited } from '../../lib/plans';
 
 const QRScanner = dynamic(() => import('../../components/QRScanner'), { ssr: false });
 
@@ -77,6 +81,32 @@ export default function QRPage() {
     message: string;
   } | null>(null);
   const [exchangeError, setExchangeError] = useState<string | null>(null);
+  const { entitlements } = usePlan();
+  const { level: privacyLevel } = usePrivacy(entitlements);
+  const [contacts, setContacts] = useState(loadContacts());
+  const contactLimitMessage = useMemo(() => {
+    if (isUnlimited(entitlements.contactLimit)) return '';
+    const limit = entitlements.contactLimit ?? 0;
+    if (limit <= 0) {
+      return 'Лимит контактов для текущего тарифа исчерпан.';
+    }
+    return `В вашем тарифе доступно до ${limit} контактов первого круга. Удалите контакт или подключите InNet Pro для безлимита.`;
+  }, [entitlements.contactLimit]);
+  const isContactLimitExceeded = useCallback(
+    (remoteId?: string) => {
+      if (isUnlimited(entitlements.contactLimit)) return false;
+      const limit = entitlements.contactLimit ?? 0;
+      if (limit <= 0) return true;
+      if (remoteId) {
+        const exists = contacts.some((contact) => contact.remoteId === remoteId);
+        if (exists) {
+          return false;
+        }
+      }
+      return contacts.length >= limit;
+    },
+    [contacts, entitlements.contactLimit]
+  );
 
   const lastTokenRef = useRef<string>('');
   const lastTokenTsRef = useRef<number>(0);
@@ -88,6 +118,7 @@ export default function QRPage() {
     const loadedGroups = loadFactGroups();
     setGroups(loadedGroups);
     setSelectedGroups(loadedGroups.map((group) => group.id));
+    setContacts(loadContacts());
     setIsReady(true);
   }, []);
 
@@ -105,10 +136,14 @@ export default function QRPage() {
       if (!event.key) {
         updateProfile();
         updateGroups();
+        setContacts(loadContacts());
         return;
       }
       if (event.key === 'innet_fact_groups') {
         updateGroups();
+      }
+      if (event.key === 'innet_contacts') {
+        setContacts(loadContacts());
       }
       if (PROFILE_STORAGE_KEYS.includes(event.key)) {
         updateProfile();
@@ -137,6 +172,15 @@ export default function QRPage() {
       .map(groupToShare);
   }, [groups, selectedGroups]);
 
+  const ownerContact = useMemo(
+    () => ({
+      phone: privacyLevel === 'direct-only' ? undefined : profile.phone,
+      telegram: privacyLevel === 'direct-only' ? undefined : profile.telegram,
+      instagram: privacyLevel === 'direct-only' ? undefined : profile.instagram,
+    }),
+    [privacyLevel, profile.instagram, profile.phone, profile.telegram]
+  );
+
   const sendReciprocalExchange = useCallback(
     async (targetProfileId: string) => {
       if (!profileId || !targetProfileId || profileId === targetProfileId) return;
@@ -147,12 +191,13 @@ export default function QRPage() {
           id: profileId,
           name: profile.name || 'Без имени',
           avatar: profile.avatar,
-          phone: profile.phone,
-          telegram: profile.telegram,
-          instagram: profile.instagram,
+          phone: ownerContact.phone,
+          telegram: ownerContact.telegram,
+          instagram: ownerContact.instagram,
         },
         groups: shareGroups,
         generatedAt: Date.now(),
+        privacy: privacyLevel,
       };
 
       const response = await sendExchange(profileId, targetProfileId, payload);
@@ -162,7 +207,7 @@ export default function QRPage() {
       }
       setExchangeError(null);
     },
-    [profileId, profile, shareGroups]
+    [profileId, profile, shareGroups, ownerContact, privacyLevel]
   );
 
   const shareTokenInfo = useMemo(() => {
@@ -174,19 +219,20 @@ export default function QRPage() {
           id: profileId,
           name: profile.name || 'Без имени',
           avatar: profile.avatar,
-          phone: profile.phone,
-          telegram: profile.telegram,
-          instagram: profile.instagram,
+          phone: ownerContact.phone,
+          telegram: ownerContact.telegram,
+          instagram: ownerContact.instagram,
         },
         groups: shareGroups,
         generatedAt: Date.now() + shareNonce,
+        privacy: privacyLevel,
       });
       return { token, error: null as string | null };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Не удалось создать QR-код.';
       return { token: SHARE_PREFIX, error: message };
     }
-  }, [profileId, profile, shareGroups, shareNonce]);
+  }, [profileId, profile, shareGroups, shareNonce, ownerContact, privacyLevel]);
 
   const shareLinkInfo = useMemo(() => {
     if (!shareTokenInfo.token || shareTokenInfo.token === SHARE_PREFIX) {
@@ -281,17 +327,23 @@ export default function QRPage() {
   useEffect(() => {
     if (!profileId || mode !== 'generate') return;
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
 
-    const poll = async () => {
+    const fetchPending = async () => {
       const result = await fetchPendingExchanges(profileId);
       if (cancelled) return;
 
       if (result.ok) {
+        let limitBlocked = false;
         if (result.exchanges.length > 0) {
           for (const exchange of result.exchanges) {
             try {
+              if (isContactLimitExceeded(exchange.payload.owner?.id)) {
+                setExchangeError(contactLimitMessage);
+                limitBlocked = true;
+                continue;
+              }
               const outcome = mergeContactFromShare(exchange.payload);
+              setContacts(loadContacts());
               setLastContactId(outcome.contact.id);
               const message = outcome.wasCreated
                 ? `Контакт «${outcome.contact.name}» добавлен автоматически.`
@@ -303,27 +355,21 @@ export default function QRPage() {
               console.error('[qr] Failed to merge incoming exchange', err);
             }
           }
+        }
+        if (!limitBlocked) {
           setExchangeError(null);
         }
       } else {
         setExchangeError(result.message);
       }
-
-      if (!cancelled) {
-        timer = setTimeout(poll, 5000);
-      }
     };
 
-    void poll();
+    void fetchPending();
 
     return () => {
       cancelled = true;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
     };
-  }, [profileId, mode]);
+  }, [profileId, mode, shareTokenInfo.token]);
 
   const handleTokenSubmit = async (rawInput?: string) => {
     if (typeof window === 'undefined') return;
@@ -398,7 +444,13 @@ export default function QRPage() {
         setScanMessage(null);
         return;
       }
+      if (isContactLimitExceeded(payload?.owner?.id)) {
+        setScanError(contactLimitMessage);
+        setScanMessage(null);
+        return;
+      }
       const { contact, wasCreated, addedFacts } = mergeContactFromShare(payload);
+      setContacts(loadContacts());
       setLastContactId(contact.id);
       setScanError(null);
       void sendReciprocalExchange(payload.owner.id);
@@ -456,8 +508,13 @@ export default function QRPage() {
 
   const handleManualContactCreate = useCallback(
     (payload: ManualContactPayload) => {
+      if (isContactLimitExceeded()) {
+        setScanError(contactLimitMessage);
+        setScanMessage(null);
+        return;
+      }
       const trimmedName = payload.name.trim() || 'Без имени';
-      const contacts = loadContacts();
+      const storedContacts = loadContacts();
       const baseContact = createContact({
         remoteId: uuidv4(),
         name: trimmedName,
@@ -472,12 +529,13 @@ export default function QRPage() {
         baseContact.notes = [...payload.notes];
       }
 
-      saveContacts([baseContact, ...contacts]);
+      saveContacts([baseContact, ...storedContacts]);
+      setContacts(loadContacts());
       setManualModalOpen(false);
       setScanError(null);
       setScanMessage(`Контакт «${baseContact.name}» добавлен вручную.`);
     },
-    []
+    [contactLimitMessage, isContactLimitExceeded]
   );
 
   if (!isReady) {
@@ -493,6 +551,17 @@ export default function QRPage() {
   return (
     <Layout>
       <div className="mx-auto w-full max-w-4xl px-4 py-8">
+        <OnboardingHint
+          id="qr"
+          title="Обмен через QR — сердце InNet"
+          description="Выберите, какими группами фактов делиться, покажите код — ваш собеседник мгновенно сохранит профиль. Принимаете код другого? Переключитесь на «Сканировать»."
+          bullets={[
+            'Кнопка «Добавить контакт» создаёт запись вручную — пригодится на офлайн-встречах.',
+            'При режиме «Сгенерировать» выбирайте группы фактов сверху, чтобы не делиться лишним.',
+            'Синхронизация и приватность контактов зависят от выбранного тарифа.',
+          ]}
+          className="mb-6"
+        />
         <h1 className="text-3xl font-bold text-slate-100">QR-коды</h1>
         <div className="mt-1 flex flex-col gap-3 text-sm text-slate-400 md:flex-row md:items-center md:justify-between">
           <p>

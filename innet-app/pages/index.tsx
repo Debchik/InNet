@@ -4,6 +4,7 @@ import Image from 'next/image';
 import Layout from '../components/Layout';
 import QRCodeToggler from '../components/QRCodeToggler';
 import { ctaSlogans } from '../utils/slogans';
+import { companyDescription, digitalDeliveryInfo, legalContactInfo, tariffPlans } from '../data/legal';
 
 const HERO_PHRASES = [
   'Будешь помнить завтра',
@@ -164,6 +165,69 @@ export default function Home() {
             </div>
             <p className="text-xs text-gray-500 mt-4">Здесь появятся группы фактов и кнопка «Добавить в сеть»</p>
           </div>
+        </div>
+      </section>
+
+      {/* Pricing Section */}
+      <section className="px-4 py-16 bg-gray-900/60">
+        <div className="max-w-5xl mx-auto">
+          <h2 className="text-3xl font-bold text-center mb-4">Тарифы и стоимость услуг</h2>
+          <p className="text-gray-300 text-center max-w-3xl mx-auto mb-10">
+            {companyDescription.shortAbout} Выберите подходящий тариф: начните бесплатно, а когда потребуется полный комплект инструментов — переходите на подписку InNet Pro.
+          </p>
+          <div className="grid gap-8 md:grid-cols-2">
+            {tariffPlans.map((plan) => (
+              <article key={plan.id} className="rounded-2xl border border-gray-700 bg-gray-800/70 p-6 flex flex-col shadow-lg">
+                <div className="flex items-center justify-between gap-4 mb-4">
+                  <h3 className="text-2xl font-semibold text-white">{plan.name}</h3>
+                  <div className="text-right">
+                    <div className="text-3xl font-bold text-primary">{plan.price}</div>
+                    <div className="text-xs uppercase tracking-wide text-gray-400">{plan.billingPeriod}</div>
+                  </div>
+                </div>
+                <p className="text-gray-300 text-sm mb-5">{plan.description}</p>
+                <ul className="space-y-2 text-sm text-gray-200 mb-6">
+                  {plan.features.map((feature) => (
+                    <li key={feature} className="flex items-start gap-2">
+                      <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-primary" />
+                      <span>{feature}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Link
+                  href={plan.id === 'free' ? '/register' : '/register?plan=pro'}
+                  className="mt-auto inline-flex items-center justify-center rounded-md bg-primary px-5 py-3 text-sm font-semibold text-background transition hover:bg-secondary"
+                >
+                  {plan.cta}
+                </Link>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Digital Delivery Section */}
+      <section className="px-4 py-16 bg-background">
+        <div className="max-w-4xl mx-auto bg-gray-800/70 border border-gray-700 rounded-2xl p-8 shadow">
+          <h2 className="text-2xl font-bold mb-4">Как предоставляется услуга</h2>
+          <p className="text-gray-300 mb-6">
+            InNet — цифровой онлайн-сервис. Все функции доступны через веб-версию в личном кабинете после регистрации и оплаты тарифа.
+          </p>
+          <ul className="space-y-3 text-sm text-gray-200">
+            {digitalDeliveryInfo.items.map((item) => (
+              <li key={item} className="flex gap-3">
+                <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" />
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-sm text-gray-400 mt-6">
+            Если возникнут вопросы или понадобится помощь, напишите на{' '}
+            <a href={`mailto:${legalContactInfo.supportEmail}`} className="text-primary hover:underline">
+              {legalContactInfo.supportEmail}
+            </a>{' '}
+            — мы отвечаем в рабочие часы в течение одного дня.
+          </p>
         </div>
       </section>
     </Layout>

@@ -241,7 +241,18 @@ export default function Layout({ children }: LayoutProps) {
       </main>
       {/* Footer */}
       <footer className="px-4 py-6 text-center text-xs text-gray-500 border-t border-gray-700">
-        © {year} InNet. Все права защищены.
+        <div className="flex flex-col items-center gap-2 text-gray-400 mb-2 md:flex-row md:justify-center md:gap-6">
+          <Link href="/legal/offer" className="hover:text-primary">
+            Публичная оферта
+          </Link>
+          <Link href="/legal/requisites" className="hover:text-primary">
+            Контакты и реквизиты
+          </Link>
+          <a href="mailto:support@innet.app" className="hover:text-primary">
+            support@innet.app
+          </a>
+        </div>
+        <p>© {year} InNet. Все права защищены.</p>
       </footer>
     </div>
   );

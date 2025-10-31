@@ -15,10 +15,13 @@ import {
 import { syncProfileToSupabase } from '../lib/profileSync';
 import { getSupabaseClient } from '../lib/supabaseClient';
 import { FACT_CATEGORY_CONFIG, FACT_CATEGORY_LABELS } from '../lib/categories';
+import { DEFAULT_PLAN } from '../lib/plans';
+import { setCurrentPlan } from '../lib/subscription';
 
 type StepOneInputs = {
   email: string;
   password: string;
+  phone: string;
 };
 
 type Credentials = StepOneInputs & { confirmed: boolean };
@@ -36,6 +39,14 @@ const PRESET_AVATARS: { id: string; label: string; gradient: string }[] = [
   { id: 'midnight', label: 'Midnight', gradient: 'bg-gradient-to-br from-indigo-500 via-purple-500 to-blue-500' },
 ];
 
+function normalizePhone(value: string): string {
+  if (!value) return '';
+  const cleaned = value.replace(/[^\d+()\-\s]/g, '');
+  const collapsed = cleaned.replace(/\s+/g, ' ').trim();
+  if (!collapsed) return '';
+  return collapsed.slice(0, 32);
+}
+
 export default function Register() {
   const router = useRouter();
   const [step, setStep] = useState<1 | 2>(1);
@@ -46,9 +57,18 @@ export default function Register() {
     getValues,
     setError,
     clearErrors,
-  } = useForm<StepOneInputs>();
+  } = useForm<StepOneInputs>({
+    defaultValues: {
+      email: '',
+      password: '',
+      phone: '',
+    },
+  });
 
   const [credentials, setCredentials] = useState<Credentials | null>(null);
+  const [signupNotice, setSignupNotice] = useState<{ type: 'info' | 'error'; text: string } | null>(
+    null
+  );
   const [name, setName] = useState('');
   const [surname, setSurname] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -78,7 +98,60 @@ export default function Register() {
     }
   }, []);
 
+  const oauthPrefillAppliedRef = useRef(false);
+
   const categoryLabelMap = FACT_CATEGORY_LABELS;
+
+  useEffect(() => {
+    if (!router.isReady) return;
+    const oauthProvider = typeof router.query.oauth === 'string' ? router.query.oauth : undefined;
+    if (oauthProvider) {
+      setStep(2);
+    }
+  }, [router.isReady, router.query.oauth]);
+
+  useEffect(() => {
+    if (oauthPrefillAppliedRef.current) return;
+    if (typeof window === 'undefined') return;
+    let rawEmail: string | null = null;
+    let rawFullName: string | null = null;
+    try {
+      rawEmail = window.sessionStorage.getItem('innet_oauth_email');
+      rawFullName = window.sessionStorage.getItem('innet_oauth_full_name');
+    } catch {
+      return;
+    }
+
+    const normalizedEmail = rawEmail?.trim().toLowerCase();
+    const trimmedFullName = rawFullName?.trim();
+    if (!normalizedEmail && !trimmedFullName) {
+      return;
+    }
+
+    oauthPrefillAppliedRef.current = true;
+
+    if (normalizedEmail) {
+      setCredentials((prev) => {
+        const base: Credentials = prev
+          ? { ...prev, email: normalizedEmail }
+          : { email: normalizedEmail, password: '', phone: '', confirmed: true };
+        return base;
+      });
+      if (step !== 2) {
+        setStep(2);
+      }
+    }
+
+    if (trimmedFullName) {
+      const parts = trimmedFullName.split(/\s+/);
+      if (parts.length > 0 && !name) {
+        setName(parts[0]);
+      }
+      if (parts.length > 1 && !surname) {
+        setSurname(parts.slice(1).join(' '));
+      }
+    }
+  }, [name, step, surname]);
 
   useEffect(() => {
     // Clear temporary messages when selection count is valid again.
@@ -100,7 +173,7 @@ export default function Register() {
       const email = data.user?.email ?? '';
       const fullName = (data.user?.user_metadata?.full_name as string | undefined) || '';
       if (email) {
-        setCredentials({ email, password: '', confirmed: true });
+        setCredentials({ email, password: '', phone: '', confirmed: true });
         if (fullName && !name) setName(fullName);
         setStep(2);
       }
@@ -173,6 +246,7 @@ export default function Register() {
 
   const handleStepOne = async (data: StepOneInputs) => {
     const trimmedEmail = data.email.trim().toLowerCase();
+    const normalizedPhone = normalizePhone(data.phone);
     const users = loadUsers();
     const alreadyExists = users.some(
       (user) => user.email.trim().toLowerCase() === trimmedEmail
@@ -182,30 +256,62 @@ export default function Register() {
         type: 'manual',
         message: 'На эту почту уже зарегистрирован аккаунт',
       });
+      setSignupNotice(null);
       return;
     }
     clearErrors();
+    setSignupNotice(null);
+
+    const placeholderNotice = {
+      type: 'info' as const,
+      text:
+        'Подтверждение почты пока в разработке. Можете продолжать регистрацию — мы сообщим, когда функция появится.',
+    };
 
     // Try creating a Supabase auth user; if env missing, gracefully continue in local mode
     try {
       if (supabase) {
-        await supabase.auth.signUp({
+        const { error: signUpError } = await supabase.auth.signUp({
           email: trimmedEmail,
           password: data.password,
-          options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent('/register')}` },
+          options: {
+            emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent('/register')}`,
+            data: normalizedPhone ? { phone: normalizedPhone } : undefined,
+          },
         });
+
+        if (signUpError) {
+          const lower = signUpError.message ? signUpError.message.toLowerCase() : '';
+          const humanMessage = lower.includes('already registered') || lower.includes('already exists')
+            ? 'На эту почту уже зарегистрирован аккаунт. Попробуйте войти.'
+            : `Supabase: ${signUpError.message || 'не удалось создать пользователя'}`;
+          setError('email', {
+            type: 'manual',
+            message: humanMessage,
+          });
+          setSignupNotice({ type: 'error', text: humanMessage });
+          return;
+        }
       }
     } catch (err) {
       console.warn('[register] Supabase signUp failed, proceeding locally', err);
     }
 
-    setCredentials({ ...data, email: trimmedEmail, confirmed: true });
+    setSignupNotice(placeholderNotice);
+
+    setCredentials({
+      email: trimmedEmail,
+      password: data.password,
+      phone: normalizedPhone,
+      confirmed: true,
+    });
     setStep(2);
   };
 
   const handleBackToStepOne = () => {
     setStep(1);
     setStepTwoErrors([]);
+    setSignupNotice(null);
   };
 
   const toggleCategory = (categoryId: string) => {
@@ -390,11 +496,70 @@ export default function Register() {
     }
 
     const currentCredentials = credentials ?? { ...getValues(), confirmed: true };
-    const email = currentCredentials.email.trim().toLowerCase();
+    let email = currentCredentials.email.trim().toLowerCase();
+
+    const resolveEmail = async (): Promise<string | undefined> => {
+      const fromCredentials = credentials?.email?.trim().toLowerCase();
+      if (fromCredentials) return fromCredentials;
+
+      if (supabase) {
+        try {
+          const { data } = await supabase.auth.getUser();
+          const sessionEmail = data.user?.email?.trim().toLowerCase();
+          if (sessionEmail) {
+            setCredentials((prev) => {
+              if (prev) {
+                return { ...prev, email: sessionEmail };
+              }
+              return { email: sessionEmail, password: '', phone: '', confirmed: true };
+            });
+            return sessionEmail;
+          }
+        } catch (error) {
+          console.warn('[register] Failed to recover email from Supabase session', error);
+        }
+      }
+
+      if (typeof window !== 'undefined') {
+        try {
+          const storedEmail = window.sessionStorage.getItem('innet_oauth_email');
+          if (storedEmail) {
+            const normalized = storedEmail.trim().toLowerCase();
+            setCredentials((prev) => {
+              if (prev) {
+                return { ...prev, email: normalized };
+              }
+              return { email: normalized, password: '', phone: '', confirmed: true };
+            });
+            return normalized;
+          }
+        } catch {
+          /* ignore storage issues */
+        }
+      }
+
+      return undefined;
+    };
+
     if (!email) {
-      setStep(1);
-      return;
+      const resolvedEmail = await resolveEmail();
+      if (!resolvedEmail) {
+        setStepTwoErrors([
+          'Не удалось получить email аккаунта после входа через Google. Повторите попытку или зарегистрируйтесь вручную.',
+        ]);
+        return;
+      }
+      email = resolvedEmail;
     }
+
+    const baseCredentials = credentials ?? { ...getValues(), confirmed: true };
+    const normalizedPhone = normalizePhone(baseCredentials.phone);
+    const effectiveCredentials: Credentials = { ...baseCredentials, email, phone: normalizedPhone };
+    setCredentials(effectiveCredentials);
+
+    setIsCompleting(true);
+    setStepTwoErrors([]);
+    setFactLimitMessage(null);
 
     const trimmedName = name.trim();
     const trimmedSurname = surname.trim();
@@ -421,27 +586,24 @@ export default function Register() {
     const avatarValue =
       avatar.type === 'preset' || avatar.type === 'upload' ? avatar.value : undefined;
 
-    // Try to read current Supabase user to infer verification state
-    let emailVerified = false;
-    try {
-      if (supabase) {
-        const { data } = await supabase.auth.getUser();
-        emailVerified = Boolean(data.user?.email_confirmed_at);
-      }
-    } catch {/* noop */}
+    // Email подтверждение временно отключено, считаем аккаунт активным сразу после регистрации.
+    const emailVerified = true;
 
     const user: UserAccount = {
       id: uuidv4(),
       email,
-      password: currentCredentials.password,
+      password: effectiveCredentials.password,
       name: trimmedName,
       surname: trimmedSurname || undefined,
+      phone: normalizedPhone || undefined,
       avatar: avatarValue,
       avatarType,
       categories: selectedCategories,
       factsByCategory: normalizedFacts,
       createdAt: Date.now(),
       verified: emailVerified,
+      plan: DEFAULT_PLAN,
+      planActivatedAt: Date.now(),
     };
 
     const users = loadUsers();
@@ -450,11 +612,7 @@ export default function Register() {
     );
     saveUsers([...withoutDuplicate, user]);
 
-    setIsCompleting(true);
-    setStepTwoErrors([]);
-    setFactLimitMessage(null);
-
-    // Supabase отправит письмо подтверждения сам (если включено). Наше письмо больше не требуется.
+    // Подтверждение почты временно отключено, дополнительных писем не отправляем.
 
     if (typeof window !== 'undefined') {
       localStorage.setItem('innet_logged_in', 'true');
@@ -467,13 +625,19 @@ export default function Register() {
       localStorage.setItem('innet_qr_select_all_groups', 'true');
       window.dispatchEvent(new Event('innet-auth-refresh'));
 
+      setCurrentPlan(DEFAULT_PLAN);
+
       if (user.surname) {
         localStorage.setItem('innet_current_user_surname', user.surname);
       } else {
         localStorage.removeItem('innet_current_user_surname');
       }
 
-      localStorage.removeItem('innet_current_user_phone');
+      if (user.phone) {
+        localStorage.setItem('innet_current_user_phone', user.phone);
+      } else {
+        localStorage.removeItem('innet_current_user_phone');
+      }
       localStorage.removeItem('innet_current_user_telegram');
       localStorage.removeItem('innet_current_user_instagram');
 
@@ -501,9 +665,16 @@ export default function Register() {
       email: user.email,
       name: user.name,
       surname: user.surname,
+      phone: user.phone,
     });
 
     setIsCompleting(false);
+    if (typeof window !== 'undefined') {
+      try {
+        window.sessionStorage.removeItem('innet_oauth_email');
+        window.sessionStorage.removeItem('innet_oauth_full_name');
+      } catch {/* ignore storage cleanup errors */}
+    }
     router.push('/app/qr');
   };
 
@@ -540,6 +711,31 @@ export default function Register() {
               </div>
 
               <div>
+                <label htmlFor="phone" className="block text-sm mb-1">
+                  Телефон <span className="text-primary font-medium">(по желанию)</span>
+                </label>
+                <input
+                  id="phone"
+                  type="tel"
+                  inputMode="tel"
+                  {...register('phone', {
+                    validate: (value) => {
+                      if (!value) return true;
+                      return /^\+?[0-9 ()-]{6,32}$/.test(value) || 'Некорректный формат номера';
+                    },
+                  })}
+                  placeholder="+7 999 000-00-00"
+                  className={`w-full px-3 py-2 bg-gray-700 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary ${
+                    errors.phone ? 'border-red-500' : 'border-gray-600'
+                  }`}
+                />
+                <p className="text-xs text-primary mt-1">
+                  Можно указать номер телефона — так вас быстрее найдут в сети InNet.
+                </p>
+                {errors.phone && <p className="text-red-500 text-sm mt-1">{errors.phone.message}</p>}
+              </div>
+
+              <div>
                 <label htmlFor="password" className="block text-sm mb-1">Пароль</label>
                 <input
                   id="password"
@@ -564,9 +760,24 @@ export default function Register() {
                   type="button"
                   onClick={() => {
                     if (!supabase) return;
-                    const next = encodeURIComponent('/register?oauth=google');
-                    const redirectTo = `${window.location.origin}/auth/callback?next=${next}`;
-                    void supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } });
+                    const desiredPath = '/register?oauth=google';
+                    const next = encodeURIComponent(desiredPath);
+                    const redirectTo = `${window.location.origin}/auth/callback?type=signup&provider=google&next=${next}`;
+                    try {
+                      window.sessionStorage.setItem('innet_oauth_redirect', desiredPath);
+                    } catch {
+                      // ignore storage restrictions
+                    }
+                    void supabase.auth.signInWithOAuth({
+                      provider: 'google',
+                      options: {
+                        redirectTo,
+                        queryParams: {
+                          access_type: 'offline',
+                          prompt: 'consent',
+                        },
+                      },
+                    });
                   }}
                   className="w-full mt-2 border border-gray-600 text-gray-100 py-2 rounded-md hover:border-primary transition-colors"
                 >
@@ -578,6 +789,17 @@ export default function Register() {
 
           {step === 2 && (
             <div className="space-y-6">
+              {signupNotice && (
+                <div
+                  className={`rounded-md border px-4 py-3 text-sm ${
+                    signupNotice.type === 'info'
+                      ? 'border-amber-400/40 bg-amber-500/10 text-amber-100'
+                      : 'border-red-500/40 bg-red-500/10 text-red-200'
+                  }`}
+                >
+                  {signupNotice.text}
+                </div>
+              )}
               <div className="space-y-6">
                 <div className="space-y-3">
                   <p className="text-sm">Аватар (опционально)</p>
