@@ -5,10 +5,8 @@ import { legalContactInfo } from '../../data/legal';
 const requisitesList = [
   { label: 'ФИО самозанятого', value: legalContactInfo.legalHolderFullName },
   { label: 'ИНН', value: legalContactInfo.inn },
-  { label: 'ОГРНИП', value: legalContactInfo.ogrnip },
   { label: 'Телефон', value: legalContactInfo.phone, href: `tel:${legalContactInfo.phone.replace(/\s|\(|\)|-/g, '')}` },
   { label: 'Электронная почта', value: legalContactInfo.supportEmail, href: `mailto:${legalContactInfo.supportEmail}` },
-  { label: 'Почтовый адрес', value: legalContactInfo.postalAddress },
   { label: 'Время работы поддержки', value: legalContactInfo.workingHours },
 ].filter((item) => Boolean(item.value));
 
@@ -68,6 +66,10 @@ export default function LegalRequisitesPage() {
                 {legalContactInfo.phone}
               </a>{' '}
               в рабочее время ({legalContactInfo.workingHours}).
+            </p>
+            <p>
+              Претензии по качеству услуги и возвраты рассматриваем в течение 10 рабочих дней. В письме укажите идентификатор
+              платежа и описание ситуации.
             </p>
             <p>
               Для официальных запросов направляйте письма на почтовый адрес, указанный выше. Корреспонденция принимается

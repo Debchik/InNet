@@ -41,14 +41,9 @@ export default function PublicOfferPage() {
               <div>
                 <h3 className="text-sm font-semibold text-white mb-2">Исполнитель</h3>
                 <p className="text-gray-300">
-                  {legalContactInfo.legalHolderFullName}, ИНН {legalContactInfo.inn}
-                  {legalContactInfo.ogrnip ? `, ОГРНИП ${legalContactInfo.ogrnip}` : ''}.
-                  Связь: {legalContactInfo.supportEmail}, {legalContactInfo.phone}.
+                  {legalContactInfo.legalHolderFullName}, ИНН {legalContactInfo.inn}. Связь:{' '}
+                  {legalContactInfo.supportEmail}, {legalContactInfo.phone}.
                 </p>
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-white mb-2">Адрес для корреспонденции</h3>
-                <p className="text-gray-300">{legalContactInfo.postalAddress}</p>
               </div>
             </div>
           </section>
@@ -125,7 +120,19 @@ export default function PublicOfferPage() {
           </section>
 
           <section className="space-y-4">
-            <h2 className="text-2xl font-semibold text-white">6. Ответственность и ограничения</h2>
+            <h2 className="text-2xl font-semibold text-white">6. Претензии и обратная связь</h2>
+            <p className="text-sm text-gray-300">
+              Все обращения по качеству услуг, ошибочным списаниям или вопросам подписки направляйте на{' '}
+              <a href={`mailto:${legalContactInfo.supportEmail}`} className="text-primary hover:underline">
+                {legalContactInfo.supportEmail}
+              </a>{' '}
+              либо почтовым письмом по адресу из раздела «Контакты и реквизиты». Ответ направляется в течение 2 рабочих дней, а
+              рассмотрение претензии занимает до 10 рабочих дней. Если запрос связан с возвратом средств, приложите идентификатор платежа (payment_id).
+            </p>
+          </section>
+
+          <section className="space-y-4">
+            <h2 className="text-2xl font-semibold text-white">7. Ответственность и ограничения</h2>
             <ul className="text-sm text-gray-200 space-y-2">
               <li className="flex gap-3">
                 <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" />
@@ -152,7 +159,7 @@ export default function PublicOfferPage() {
           </section>
 
           <section className="space-y-4">
-            <h2 className="text-2xl font-semibold text-white">7. Заключительные положения</h2>
+            <h2 className="text-2xl font-semibold text-white">8. Заключительные положения</h2>
             <p className="text-sm text-gray-300">
               Оферта вступает в силу с момента публикации и действует до её отзыва. Исполнитель вправе обновлять текст с
               предварительным уведомлением пользователей на сайте и по электронной почте. Продолжение использования сервиса

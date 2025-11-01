@@ -2,11 +2,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import Layout from '../components/Layout';
-import { convertFactsToGroups, loadUsers, saveFactGroups, saveUsers, type UserAccount } from '../lib/storage';
+import {
+  convertFactsToGroups,
+  loadUsers,
+  saveFactGroups,
+  saveUsers,
+  type UserAccount,
+} from '../lib/storage';
 import { getSupabaseClient } from '../lib/supabaseClient';
 import { v4 as uuidv4 } from 'uuid';
 import { DEFAULT_PLAN } from '../lib/plans';
 import { setCurrentPlan } from '../lib/subscription';
+import { normalizePhone } from '../utils/contact';
 
 /**
  * Login page. This simplistic implementation stores a flag in localStorage
@@ -16,7 +23,7 @@ import { setCurrentPlan } from '../lib/subscription';
  */
 export default function Login() {
   const router = useRouter();
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const supabase = useMemo(() => {
@@ -30,7 +37,9 @@ export default function Login() {
       const sUser = data.user;
       if (!sUser?.email) return;
       const users = loadUsers();
-      let user = users.find((u) => u.email.trim().toLowerCase() === sUser.email!.trim().toLowerCase());
+      let user = users.find(
+        (u) => u.email.trim().toLowerCase() === sUser.email!.trim().toLowerCase()
+      );
       if (!user) {
         user = {
           id: uuidv4(),
@@ -80,17 +89,34 @@ export default function Login() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     // Basic validation
-    if (!email || !password) {
-      setError('Введите email и пароль');
+    const trimmedIdentifier = identifier.trim();
+    if (!trimmedIdentifier || !password) {
+      setError('Введите email или телефон и пароль');
       return;
     }
     const users = loadUsers();
-    const user = users.find(
-      (entry) => entry.email.trim().toLowerCase() === email.trim().toLowerCase()
-    );
+    const normalizedLogin = trimmedIdentifier.toLowerCase();
+    const normalizedPhone = normalizePhone(trimmedIdentifier);
+    const user = users.find((entry) => {
+      const entryLogin = entry.email.trim().toLowerCase();
+      if (entryLogin === normalizedLogin) {
+        return true;
+      }
+      if (normalizedPhone) {
+        const entryPhone = entry.phone ? normalizePhone(entry.phone) : '';
+        if (entryPhone && entryPhone === normalizedPhone) {
+          return true;
+        }
+        const emailAsPhone = normalizePhone(entry.email);
+        if (emailAsPhone && emailAsPhone === normalizedPhone) {
+          return true;
+        }
+      }
+      return false;
+    });
 
     if (!user) {
-      setError('Аккаунт с такой почтой не найден. Зарегистрируйтесь.');
+      setError('Аккаунт с таким email или телефоном не найден. Зарегистрируйтесь.');
       return;
     }
 
@@ -166,12 +192,15 @@ export default function Login() {
           {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="email" className="block text-sm mb-1">Email</label>
+              <label htmlFor="identifier" className="block text-sm mb-1">
+                Email или телефон
+              </label>
               <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                id="identifier"
+                type="text"
+                autoComplete="username"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
                 className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>

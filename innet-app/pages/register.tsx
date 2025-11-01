@@ -17,14 +17,19 @@ import { getSupabaseClient } from '../lib/supabaseClient';
 import { FACT_CATEGORY_CONFIG, FACT_CATEGORY_LABELS } from '../lib/categories';
 import { DEFAULT_PLAN } from '../lib/plans';
 import { setCurrentPlan } from '../lib/subscription';
+import { isEmail, isPhone, normalizePhone } from '../utils/contact';
 
 type StepOneInputs = {
-  email: string;
+  contact: string;
   password: string;
-  phone: string;
 };
 
-type Credentials = StepOneInputs & { confirmed: boolean };
+type Credentials = {
+  email: string;
+  phone: string;
+  password: string;
+  confirmed: boolean;
+};
 
 type AvatarChoice =
   | { type: 'none'; value?: undefined }
@@ -39,14 +44,6 @@ const PRESET_AVATARS: { id: string; label: string; gradient: string }[] = [
   { id: 'midnight', label: 'Midnight', gradient: 'bg-gradient-to-br from-indigo-500 via-purple-500 to-blue-500' },
 ];
 
-function normalizePhone(value: string): string {
-  if (!value) return '';
-  const cleaned = value.replace(/[^\d+()\-\s]/g, '');
-  const collapsed = cleaned.replace(/\s+/g, ' ').trim();
-  if (!collapsed) return '';
-  return collapsed.slice(0, 32);
-}
-
 export default function Register() {
   const router = useRouter();
   const [step, setStep] = useState<1 | 2>(1);
@@ -59,9 +56,8 @@ export default function Register() {
     clearErrors,
   } = useForm<StepOneInputs>({
     defaultValues: {
-      email: '',
+      contact: '',
       password: '',
-      phone: '',
     },
   });
 
@@ -245,16 +241,39 @@ export default function Register() {
   }, [isCameraOpen, stopCameraStream]);
 
   const handleStepOne = async (data: StepOneInputs) => {
-    const trimmedEmail = data.email.trim().toLowerCase();
-    const normalizedPhone = normalizePhone(data.phone);
-    const users = loadUsers();
-    const alreadyExists = users.some(
-      (user) => user.email.trim().toLowerCase() === trimmedEmail
-    );
-    if (alreadyExists) {
-      setError('email', {
+    const rawContact = data.contact.trim();
+    const contactIsEmail = isEmail(rawContact);
+    const contactIsPhone = isPhone(rawContact);
+
+    if (!contactIsEmail && !contactIsPhone) {
+      setError('contact', {
         type: 'manual',
-        message: 'На эту почту уже зарегистрирован аккаунт',
+        message: 'Введите корректный email или номер телефона',
+      });
+      setSignupNotice(null);
+      return;
+    }
+
+    const normalizedEmail = contactIsEmail ? rawContact.trim().toLowerCase() : '';
+    const normalizedPhone = contactIsPhone ? normalizePhone(rawContact) : '';
+    const users = loadUsers();
+    const alreadyExists = users.some((user) => {
+      if (contactIsEmail) {
+        return user.email.trim().toLowerCase() === normalizedEmail;
+      }
+      if (contactIsPhone) {
+        const existingPhone = user.phone ? normalizePhone(user.phone) : '';
+        return existingPhone && existingPhone === normalizedPhone;
+      }
+      return false;
+    });
+
+    if (alreadyExists) {
+      setError('contact', {
+        type: 'manual',
+        message: contactIsEmail
+          ? 'На эту почту уже зарегистрирован аккаунт'
+          : 'На этот номер уже зарегистрирован аккаунт',
       });
       setSignupNotice(null);
       return;
@@ -262,52 +281,63 @@ export default function Register() {
     clearErrors();
     setSignupNotice(null);
 
-    const placeholderNotice = {
-      type: 'info' as const,
-      text:
-        'Подтверждение почты пока в разработке. Можете продолжать регистрацию — мы сообщим, когда функция появится.',
-    };
+    let requiresEmailConfirmation = false;
 
     // Try creating a Supabase auth user; if env missing, gracefully continue in local mode
-    try {
-      if (supabase) {
-        const { error: signUpError } = await supabase.auth.signUp({
-          email: trimmedEmail,
-          password: data.password,
-          options: {
-            emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent('/register')}`,
-            data: normalizedPhone ? { phone: normalizedPhone } : undefined,
-          },
-        });
-
-        if (signUpError) {
-          const lower = signUpError.message ? signUpError.message.toLowerCase() : '';
-          const humanMessage = lower.includes('already registered') || lower.includes('already exists')
-            ? 'На эту почту уже зарегистрирован аккаунт. Попробуйте войти.'
-            : `Supabase: ${signUpError.message || 'не удалось создать пользователя'}`;
-          setError('email', {
-            type: 'manual',
-            message: humanMessage,
+    if (contactIsEmail) {
+      try {
+        if (supabase) {
+          const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+            email: normalizedEmail,
+            password: data.password,
+            options: {
+              emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent('/register')}`,
+              data: normalizedPhone ? { phone: normalizedPhone } : undefined,
+            },
           });
-          setSignupNotice({ type: 'error', text: humanMessage });
-          return;
+
+          if (signUpError) {
+            const lower = signUpError.message ? signUpError.message.toLowerCase() : '';
+            const humanMessage =
+              lower.includes('already registered') || lower.includes('already exists')
+                ? 'На эту почту уже зарегистрирован аккаунт. Попробуйте войти.'
+                : `Supabase: ${signUpError.message || 'не удалось создать пользователя'}`;
+            setError('contact', {
+              type: 'manual',
+              message: humanMessage,
+            });
+            setSignupNotice({ type: 'error', text: humanMessage });
+            return;
+          }
+
+          requiresEmailConfirmation = !signUpData.user?.email_confirmed_at;
+
+          if (requiresEmailConfirmation) {
+            setSignupNotice({
+              type: 'info',
+              text: `Мы отправили письмо с подтверждением на ${normalizedEmail}. Перейдите по ссылке из письма, чтобы активировать аккаунт.`,
+            });
+          } else {
+            setSignupNotice(null);
+          }
         }
+      } catch (err) {
+        console.warn('[register] Supabase signUp failed, proceeding locally', err);
+        setSignupNotice({
+          type: 'error',
+          text: 'Не удалось связаться с Supabase для отправки письма подтверждения. Регистрация продолжится, но проверьте настройки позже.',
+        });
       }
-    } catch (err) {
-      console.warn('[register] Supabase signUp failed, proceeding locally', err);
     }
 
-    setSignupNotice(placeholderNotice);
-
     setCredentials({
-      email: trimmedEmail,
-      password: data.password,
+      email: normalizedEmail,
       phone: normalizedPhone,
-      confirmed: true,
+      password: data.password,
+      confirmed: !requiresEmailConfirmation,
     });
     setStep(2);
   };
-
   const handleBackToStepOne = () => {
     setStep(1);
     setStepTwoErrors([]);
@@ -495,8 +525,21 @@ export default function Register() {
       return;
     }
 
-    const currentCredentials = credentials ?? { ...getValues(), confirmed: true };
-    let email = currentCredentials.email.trim().toLowerCase();
+    const formValues = getValues();
+    const fallbackContact = formValues.contact?.trim() ?? '';
+    const fallbackEmail = isEmail(fallbackContact) ? fallbackContact.trim().toLowerCase() : '';
+    const fallbackPhone = isPhone(fallbackContact) ? normalizePhone(fallbackContact) : '';
+    const fallbackPassword = formValues.password ?? '';
+
+    const baseCredentials: Credentials =
+      credentials ?? {
+        email: fallbackEmail,
+        phone: fallbackPhone,
+        password: fallbackPassword,
+        confirmed: true,
+      };
+    let effectiveEmail = baseCredentials.email.trim().toLowerCase();
+    const effectivePhone = normalizePhone(baseCredentials.phone);
 
     const resolveEmail = async (): Promise<string | undefined> => {
       const fromCredentials = credentials?.email?.trim().toLowerCase();
@@ -541,7 +584,7 @@ export default function Register() {
       return undefined;
     };
 
-    if (!email) {
+    if (!effectiveEmail && !effectivePhone) {
       const resolvedEmail = await resolveEmail();
       if (!resolvedEmail) {
         setStepTwoErrors([
@@ -549,12 +592,23 @@ export default function Register() {
         ]);
         return;
       }
-      email = resolvedEmail;
+      effectiveEmail = resolvedEmail;
     }
 
-    const baseCredentials = credentials ?? { ...getValues(), confirmed: true };
-    const normalizedPhone = normalizePhone(baseCredentials.phone);
-    const effectiveCredentials: Credentials = { ...baseCredentials, email, phone: normalizedPhone };
+    const loginIdentifier = effectiveEmail || effectivePhone;
+    if (!loginIdentifier) {
+      setStepTwoErrors([
+        'Укажите email или телефон, чтобы завершить регистрацию.',
+      ]);
+      return;
+    }
+
+    const effectiveCredentials: Credentials = {
+      email: effectiveEmail,
+      phone: effectivePhone,
+      password: baseCredentials.password,
+      confirmed: baseCredentials.confirmed,
+    };
     setCredentials(effectiveCredentials);
 
     setIsCompleting(true);
@@ -586,16 +640,15 @@ export default function Register() {
     const avatarValue =
       avatar.type === 'preset' || avatar.type === 'upload' ? avatar.value : undefined;
 
-    // Email подтверждение временно отключено, считаем аккаунт активным сразу после регистрации.
-    const emailVerified = true;
+    const emailVerified = effectiveCredentials.confirmed || !effectiveEmail;
 
     const user: UserAccount = {
       id: uuidv4(),
-      email,
+      email: loginIdentifier,
       password: effectiveCredentials.password,
       name: trimmedName,
       surname: trimmedSurname || undefined,
-      phone: normalizedPhone || undefined,
+      phone: effectivePhone || undefined,
       avatar: avatarValue,
       avatarType,
       categories: selectedCategories,
@@ -607,12 +660,21 @@ export default function Register() {
     };
 
     const users = loadUsers();
-    const withoutDuplicate = users.filter(
-      (entry) => entry.email.trim().toLowerCase() !== email
-    );
+    const normalizedLogin = loginIdentifier.trim().toLowerCase();
+    const withoutDuplicate = users.filter((entry) => {
+      const entryLogin = entry.email.trim().toLowerCase();
+      if (entryLogin === normalizedLogin) {
+        return false;
+      }
+      if (effectivePhone) {
+        const entryPhone = entry.phone ? normalizePhone(entry.phone) : '';
+        if (entryPhone === effectivePhone) {
+          return false;
+        }
+      }
+      return true;
+    });
     saveUsers([...withoutDuplicate, user]);
-
-    // Подтверждение почты временно отключено, дополнительных писем не отправляем.
 
     if (typeof window !== 'undefined') {
       localStorage.setItem('innet_logged_in', 'true');
@@ -661,12 +723,14 @@ export default function Register() {
       window.dispatchEvent(new Event('innet-refresh-notifications'));
     }
 
-    void syncProfileToSupabase({
-      email: user.email,
-      name: user.name,
-      surname: user.surname,
-      phone: user.phone,
-    });
+    if (effectiveEmail) {
+      void syncProfileToSupabase({
+        email: effectiveEmail,
+        name: user.name,
+        surname: user.surname,
+        phone: user.phone,
+      });
+    }
 
     setIsCompleting(false);
     if (typeof window !== 'undefined') {
@@ -694,45 +758,33 @@ export default function Register() {
           {step === 1 && (
             <form onSubmit={handleSubmit(handleStepOne)} className="space-y-4">
               <div>
-                <label htmlFor="email" className="block text-sm mb-1">Email</label>
-                <input
-                  id="email"
-                  type="email"
-                  {...register('email', {
-                    required: 'Введите email',
-                    pattern: {
-                      value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-                      message: 'Некорректный формат email',
-                    },
-                  })}
-                  className={`w-full px-3 py-2 bg-gray-700 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary ${errors.email ? 'border-red-500' : 'border-gray-600'}`}
-                />
-                {errors.email && <p className="text-red-500 text-sm mt-1">{errors.email.message}</p>}
-              </div>
-
-              <div>
-                <label htmlFor="phone" className="block text-sm mb-1">
-                  Телефон <span className="text-primary font-medium">(по желанию)</span>
+                <label htmlFor="contact" className="block text-sm mb-1">
+                  Email или телефон <span className="text-primary font-medium">— на ваш выбор</span>
                 </label>
                 <input
-                  id="phone"
-                  type="tel"
-                  inputMode="tel"
-                  {...register('phone', {
+                  id="contact"
+                  type="text"
+                  autoComplete="email"
+                  {...register('contact', {
+                    required: 'Введите email или номер телефона',
                     validate: (value) => {
-                      if (!value) return true;
-                      return /^\+?[0-9 ()-]{6,32}$/.test(value) || 'Некорректный формат номера';
+                      if (isEmail(value) || isPhone(value)) {
+                        return true;
+                      }
+                      return 'Введите корректный email или номер телефона';
                     },
                   })}
-                  placeholder="+7 999 000-00-00"
+                  placeholder="например, name@example.com или +7 999 000-00-00"
                   className={`w-full px-3 py-2 bg-gray-700 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary ${
-                    errors.phone ? 'border-red-500' : 'border-gray-600'
+                    errors.contact ? 'border-red-500' : 'border-gray-600'
                   }`}
                 />
                 <p className="text-xs text-primary mt-1">
-                  Можно указать номер телефона — так вас быстрее найдут в сети InNet.
+                  Используйте тот способ связи, которым удобно делиться. Его увидят ваши контакты.
                 </p>
-                {errors.phone && <p className="text-red-500 text-sm mt-1">{errors.phone.message}</p>}
+                {errors.contact && (
+                  <p className="text-red-500 text-sm mt-1">{errors.contact.message}</p>
+                )}
               </div>
 
               <div>

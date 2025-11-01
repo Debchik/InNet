@@ -88,10 +88,21 @@ export default function AuthCallback() {
           // value might already be decoded or malformed; fall back to original
           decoded = value;
         }
-        if (!decoded.startsWith('/')) {
-          return undefined;
+        if (decoded.startsWith('/')) {
+          return decoded;
         }
-        return decoded;
+        if (decoded.startsWith('http://') || decoded.startsWith('https://')) {
+          try {
+            const currentOrigin = window.location.origin;
+            const url = new URL(decoded);
+            if (url.origin === currentOrigin) {
+              return `${url.pathname}${url.search}` || '/';
+            }
+          } catch {
+            /* ignore parsing issues */
+          }
+        }
+        return undefined;
       };
 
       const params = currentUrl.searchParams;

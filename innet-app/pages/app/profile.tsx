@@ -8,6 +8,7 @@ import { usePlan } from '../../hooks/usePlan';
 import { usePrivacy, PrivacyLevel } from '../../hooks/usePrivacy';
 import { useReminders } from '../../hooks/useReminders';
 import { formatRelative } from '../../utils/time';
+import { isEmail } from '../../utils/contact';
 
 type ProfileInfo = {
   id: string;
@@ -562,14 +563,16 @@ const persistAvatar = useCallback(
         window.dispatchEvent(new Event('innet-profile-updated'));
       }
 
-      void syncProfileToSupabase({
-        email: profile.email,
-        name: profile.name,
-        surname: profile.surname,
-        phone: phoneValue || undefined,
-        telegram: telegramValue,
-        instagram: instagramValue,
-      });
+      if (isEmail(profile.email)) {
+        void syncProfileToSupabase({
+          email: profile.email,
+          name: profile.name,
+          surname: profile.surname,
+          phone: phoneValue || undefined,
+          telegram: telegramValue,
+          instagram: instagramValue,
+        });
+      }
     } catch (error) {
       console.error('Не удалось сохранить контакты', error);
       setContactsFeedback({
@@ -635,7 +638,7 @@ const persistAvatar = useCallback(
                   {fullName || 'Имя будет указано после заполнения профиля'}
                 </h2>
                 <p className="text-sm text-gray-400">
-                  Почта: <span className="text-gray-200">{profile.email || '—'}</span>
+                  Контакт: <span className="text-gray-200">{profile.email || '—'}</span>
                 </p>
                 <div className="mt-4 flex flex-wrap justify-center gap-2 sm:justify-start">
                   <button
@@ -703,7 +706,7 @@ const persistAvatar = useCallback(
                         : 'bg-amber-500/20 text-amber-200'
                     }`}
                   >
-                    {profile.verified ? 'Почта подтверждена' : 'Почта не подтверждена'}
+                    {profile.verified ? 'Контакт подтверждён' : 'Контакт не подтверждён'}
                   </span>
                 </div>
                 */}
