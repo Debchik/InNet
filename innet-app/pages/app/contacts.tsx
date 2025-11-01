@@ -43,6 +43,16 @@ export default function ContactsPage() {
   const now = Date.now();
   const oneWeek = 7 * 24 * 60 * 60 * 1000;
 
+  const withAlpha = (hex: string, alpha: number) => {
+    if (!hex || !hex.startsWith('#')) return hex;
+    const value = hex.replace('#', '');
+    const base = value.slice(0, 6);
+    const alphaHex = Math.round(Math.min(Math.max(alpha, 0), 1) * 255)
+      .toString(16)
+      .padStart(2, '0');
+    return `#${base}${alphaHex}`;
+  };
+
   return (
     <Layout>
       <div className="px-4 py-8 max-w-5xl mx-auto">
@@ -91,13 +101,34 @@ export default function ContactsPage() {
                       <div className="h-10 w-10 rounded-full bg-gray-600 flex items-center justify-center text-lg text-gray-300">
                         {contact.name.charAt(0).toUpperCase()}
                       </div>
-                      <div>
-                        <p className="font-semibold">{contact.name}</p>
-                        <p className="text-xs text-gray-400">
-                          Добавлен {new Date(contact.connectedAt).toLocaleDateString()}
-                        </p>
+                  <div>
+                    <p className="font-semibold">{contact.name}</p>
+                    <p className="text-xs text-gray-400">
+                      Добавлен {new Date(contact.connectedAt).toLocaleDateString()}
+                    </p>
+                    {contact.tags && contact.tags.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {contact.tags.map((tag) => (
+                          <span
+                            key={tag.id}
+                            className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium"
+                            style={{
+                              borderColor: withAlpha(tag.color, 0.5),
+                              backgroundColor: withAlpha(tag.color, 0.16),
+                              color: tag.color,
+                            }}
+                          >
+                            <span
+                              className="h-2 w-2 rounded-full"
+                              style={{ backgroundColor: tag.color }}
+                            />
+                            {tag.label}
+                          </span>
+                        ))}
                       </div>
-                    </div>
+                    )}
+                  </div>
+                </div>
                     {isRecent && (
                       <span className="text-xs text-green-400">New</span>
                     )}

@@ -37,6 +37,48 @@ export interface ContactNote {
   createdAt: number;
 }
 
+export interface ContactTag {
+  id: string;
+  label: string;
+  color: string;
+}
+
+export const CONTACT_TAG_COLOR_PRESETS = [
+  '#38BDF8',
+  '#FB923C',
+  '#22C55E',
+  '#A855F7',
+  '#F472B6',
+  '#14B8A6',
+  '#FACC15',
+] as const;
+
+function pickTagColor(seed?: string): string {
+  if (seed && seed.startsWith('#') && (seed.length === 7 || seed.length === 9)) {
+    return seed;
+  }
+  const index = Math.floor(Math.random() * CONTACT_TAG_COLOR_PRESETS.length);
+  return CONTACT_TAG_COLOR_PRESETS[index];
+}
+
+export function createContactTag(label: string, color?: string): ContactTag {
+  const normalizedLabel = (label ?? '').toString().trim();
+  if (!normalizedLabel) {
+    throw new Error('Тег должен содержать название');
+  }
+  return {
+    id: uuidv4(),
+    label: normalizedLabel,
+    color: pickTagColor(color),
+  };
+}
+
+export interface ContactConnection {
+  id: string;
+  name: string;
+  avatar?: string;
+}
+
 export interface Contact {
   id: string;
   remoteId: string;
@@ -49,11 +91,13 @@ export interface Contact {
   lastUpdated: number;
   groups: ContactGroup[];
   notes: ContactNote[];
+  tags: ContactTag[];
+  connections?: ContactConnection[];
 }
 
 export interface GraphData {
-  nodes: { id: string; name: string; avatar?: string; }[];
-  links: { source: string; target: string; }[];
+  nodes: { id: string; name: string; avatar?: string; level?: number; tagColor?: string }[];
+  links: { source: string; target: string }[];
 }
 
 export interface UserAccount {
@@ -200,12 +244,43 @@ export function convertFactsToGroups(factsByCategory: Record<string, string[]>):
  * current user (assumed id 'me'), though edges can be extended later.
  */
 export function buildGraphData(currentUserId: string, contacts: Contact[]): GraphData {
-  const nodes = [
-    { id: currentUserId, name: 'Вы', avatar: undefined },
-    ...contacts.map((c) => ({ id: c.id, name: c.name, avatar: c.avatar }))
-  ];
-  const links = contacts.map((c) => ({ source: currentUserId, target: c.id }));
-  return { nodes, links };
+  const nodes = new Map<string, { id: string; name: string; avatar?: string; level?: number; tagColor?: string }>();
+  const links: GraphData['links'] = [];
+
+  nodes.set(currentUserId, { id: currentUserId, name: 'Вы', avatar: undefined, level: 0, tagColor: '#38BDF8' });
+
+  contacts.forEach((contact) => {
+    nodes.set(contact.id, {
+      id: contact.id,
+      name: contact.name,
+      avatar: contact.avatar,
+      level: 1,
+      tagColor: contact.tags[0]?.color,
+    });
+    links.push({ source: currentUserId, target: contact.id });
+
+    const secondary = contact.connections ?? [];
+    secondary.forEach((connection) => {
+      const connectionId = connection.id;
+      if (!connectionId) return;
+
+      if (!nodes.has(connectionId)) {
+        nodes.set(connectionId, {
+          id: connectionId,
+          name: connection.name,
+          avatar: connection.avatar,
+          level: 2,
+        });
+      }
+
+      links.push({ source: contact.id, target: connectionId });
+    });
+  });
+
+  return {
+    nodes: Array.from(nodes.values()),
+    links,
+  };
 }
 
 /**
@@ -245,8 +320,14 @@ export function createContact(data: {
   telegram?: string;
   instagram?: string;
   groups: ContactGroup[];
+  tags?: ContactTag[];
 }): Contact {
   const id = uuidv4();
+  const normalizedTags = Array.isArray(data.tags)
+    ? data.tags
+        .map((tag) => normalizeContactTag(tag))
+        .filter((tag): tag is ContactTag => tag != null)
+    : [];
   return {
     id,
     remoteId: data.remoteId,
@@ -258,6 +339,7 @@ export function createContact(data: {
     connectedAt: Date.now(),
     lastUpdated: Date.now(),
     groups: data.groups.map((group) => normalizeContactGroup(group)),
+    tags: normalizedTags,
     notes: [],
   };
 }
@@ -328,6 +410,15 @@ function normalizeContact(raw: unknown): Contact | null {
   const notes = notesSource
     .map((note) => normalizeContactNote(note))
     .filter((note): note is ContactNote => note != null);
+  const tagsSource = Array.isArray(record.tags) ? record.tags : [];
+  const tags = tagsSource
+    .map((tag) => normalizeContactTag(tag))
+    .filter((tag): tag is ContactTag => tag != null);
+
+  const connectionsSource = Array.isArray(record.connections) ? record.connections : [];
+  const connections = connectionsSource
+    .map((connection) => normalizeContactConnection(connection))
+    .filter((connection): connection is ContactConnection => connection != null);
 
   const remoteId =
     isString(record.remoteId) ? record.remoteId : isString(record.id) ? record.id : uuidv4();
@@ -350,6 +441,8 @@ function normalizeContact(raw: unknown): Contact | null {
           facts: [],
         })),
     notes,
+    tags,
+    connections,
   };
 }
 
@@ -365,6 +458,19 @@ function normalizeContactGroup(raw: unknown): ContactGroup {
   return { id, name, color, facts };
 }
 
+function normalizeContactTag(raw: unknown): ContactTag | null {
+  const record = toRecord(raw);
+  if (!record) return null;
+  const label = isString(record.label) ? record.label.trim() : '';
+  if (!label) return null;
+  const color = isString(record.color) ? record.color : undefined;
+  return {
+    id: isString(record.id) ? record.id : uuidv4(),
+    label,
+    color: pickTagColor(color),
+  };
+}
+
 function normalizeContactNote(raw: unknown): ContactNote | null {
   const record = toRecord(raw);
   if (!record) return null;
@@ -375,6 +481,16 @@ function normalizeContactNote(raw: unknown): ContactNote | null {
     text,
     createdAt: isNumber(record.createdAt) ? record.createdAt : Date.now(),
   };
+}
+
+function normalizeContactConnection(raw: unknown): ContactConnection | null {
+  const record = toRecord(raw);
+  if (!record) return null;
+  const id = isString(record.id) ? record.id : uuidv4();
+  const avatar = isString(record.avatar) ? record.avatar : undefined;
+  const nameValue = isString(record.name) ? record.name.trim() : '';
+  const name = nameValue || 'Контакт';
+  return { id, name, avatar };
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -390,4 +506,135 @@ function isString(value: unknown): value is string {
 
 function isNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
+}
+
+function createSeededRandom(seed?: number): () => number {
+  let state = (typeof seed === 'number' && Number.isFinite(seed) ? seed : Date.now()) >>> 0;
+  if (state === 0) {
+    state = 0x1a2b3c4d;
+  }
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function pickUniqueIndices(total: number, desired: number, random: () => number): number[] {
+  if (total <= 0 || desired <= 0) return [];
+  const count = Math.min(desired, total);
+  const selected = new Set<number>();
+  while (selected.size < count) {
+    const index = Math.floor(random() * total);
+    selected.add(index);
+  }
+  return Array.from(selected);
+}
+
+const TEST_FIRST_NAMES = [
+  'Алексей',
+  'Мария',
+  'Иван',
+  'Татьяна',
+  'Сергей',
+  'Анастасия',
+  'Никита',
+  'Екатерина',
+  'Павел',
+  'Юлия',
+  'Дмитрий',
+  'Ольга',
+  'Андрей',
+  'Светлана',
+  'Максим',
+  'Ксения',
+  'Владимир',
+  'Ирина',
+  'Михаил',
+  'Елена',
+];
+
+const TEST_LAST_NAMES = [
+  'Иванов',
+  'Петрова',
+  'Сидоров',
+  'Кузнецова',
+  'Смирнов',
+  'Орлова',
+  'Лебедев',
+  'Соколова',
+  'Федоров',
+  'Васильева',
+  'Морозов',
+  'Волкова',
+  'Новиков',
+  'Борисова',
+  'Ершов',
+  'Семенова',
+  'Зайцев',
+  'Павлова',
+  'Егоров',
+  'Сергеев',
+];
+
+function generateTestName(random: () => number): string {
+  const first =
+    TEST_FIRST_NAMES[Math.floor(random() * TEST_FIRST_NAMES.length)] ?? TEST_FIRST_NAMES[0];
+  const last =
+    TEST_LAST_NAMES[Math.floor(random() * TEST_LAST_NAMES.length)] ?? TEST_LAST_NAMES[0];
+  return `${first} ${last}`;
+}
+
+/**
+ * Populate localStorage with synthetic contacts to quickly try the graph.
+ * Generates 20 first-level connections and 10 second-level nodes that
+ * attach to random first-level contacts. Existing contacts are replaced.
+ */
+export function seedTestContacts(seed?: number): Contact[] {
+  if (typeof window === 'undefined') return [];
+  const random = createSeededRandom(seed);
+  const now = Date.now();
+
+  const firstLevel = Array.from({ length: 20 }, () => {
+    const id = uuidv4();
+    return {
+      id,
+      remoteId: `remote-${id}`,
+      name: generateTestName(random),
+      connectedAt: now - Math.floor(random() * 14 * 24 * 60 * 60 * 1000),
+      lastUpdated: now,
+      groups: [],
+      notes: [],
+      tags: [],
+      connections: [] as ContactConnection[],
+    };
+  });
+
+  const secondLevel = Array.from({ length: 10 }, () => ({
+    id: uuidv4(),
+    name: generateTestName(random),
+    avatar: undefined,
+  }));
+
+  secondLevel.forEach((connection) => {
+    const attachments = pickUniqueIndices(
+      firstLevel.length,
+      1 + Math.floor(random() * 2),
+      random
+    );
+    attachments.forEach((index) => {
+      const contact = firstLevel[index];
+      if (!contact) return;
+      contact.connections = contact.connections ?? [];
+      contact.connections.push({
+        id: connection.id,
+        name: connection.name,
+        avatar: connection.avatar,
+      });
+    });
+  });
+
+  saveContacts(firstLevel);
+  return firstLevel;
 }

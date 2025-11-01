@@ -9,6 +9,7 @@ export type PlanEntitlements = {
   allowFullPrivacy: boolean;
   allowSyncAcrossDevices: boolean;
   allowAiSuggestions: boolean;
+  allowCustomTags: boolean;
 };
 
 export type PlanMeta = {
@@ -31,6 +32,7 @@ export const PLAN_ENTITLEMENTS: Record<PlanId, PlanEntitlements> = {
     allowFullPrivacy: false,
     allowSyncAcrossDevices: false,
     allowAiSuggestions: false,
+    allowCustomTags: false,
   },
   pro: {
     contactLimit: unlimited,
@@ -41,6 +43,7 @@ export const PLAN_ENTITLEMENTS: Record<PlanId, PlanEntitlements> = {
     allowFullPrivacy: true,
     allowSyncAcrossDevices: true,
     allowAiSuggestions: true,
+    allowCustomTags: true,
   },
 };
 

@@ -23,11 +23,11 @@ type ErrorResponse = {
 
 const PLAN_CATALOG: Record<PlanProduct, { amount: number; description: string }> = {
   'pro-monthly': {
-    amount: 249,
+    amount: 299,
     description: 'Подписка InNet Pro — месяц',
   },
   'pro-annual': {
-    amount: 1790,
+    amount: 1990,
     description: 'Подписка InNet Pro — год',
   },
 };
@@ -64,6 +64,7 @@ export default async function handler(
       email: body.email,
       metadata: {
         planId,
+        trialDays: planId === 'pro-monthly' ? '30' : '0',
       },
     });
 

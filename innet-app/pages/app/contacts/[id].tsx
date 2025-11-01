@@ -6,7 +6,9 @@ import {
   Contact,
   CONTACT_NOTE_LIMIT,
   CONTACT_NOTE_MAX,
+  CONTACT_TAG_COLOR_PRESETS,
   createContactNote,
+  createContactTag,
   loadContacts,
   loadFactGroups,
   saveContacts,
@@ -16,6 +18,16 @@ import { formatRelative } from '../../../utils/time';
 import Link from 'next/link';
 import { usePlan } from '../../../hooks/usePlan';
 import { buildAiSuggestions } from '../../../lib/assistant';
+
+const withAlpha = (hex: string, alpha: number) => {
+  if (!hex || !hex.startsWith('#')) return hex;
+  const value = hex.replace('#', '');
+  const base = value.slice(0, 6);
+  const alphaHex = Math.round(Math.min(Math.max(alpha, 0), 1) * 255)
+    .toString(16)
+    .padStart(2, '0');
+  return `#${base}${alphaHex}`;
+};
 
 export default function ContactDetail() {
   const router = useRouter();
@@ -33,6 +45,11 @@ export default function ContactDetail() {
   const [copiedSuggestionId, setCopiedSuggestionId] = useState<string | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const copyTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const allowCustomTags = entitlements.allowCustomTags;
+  const [tagLabel, setTagLabel] = useState('');
+  const [tagColor, setTagColor] = useState<string>(CONTACT_TAG_COLOR_PRESETS[0]);
+  const [tagError, setTagError] = useState<string | null>(null);
+  const [tagMessage, setTagMessage] = useState<string | null>(null);
 
   const handleNoteChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const raw = event.target.value;
@@ -62,6 +79,10 @@ export default function ContactDetail() {
     setEditPhone(contact.phone ?? '');
     setEditTelegram(contact.telegram ?? '');
     setEditInstagram(contact.instagram ?? '');
+    setTagLabel('');
+    setTagColor(contact.tags[0]?.color ?? CONTACT_TAG_COLOR_PRESETS[0]);
+    setTagError(null);
+    setTagMessage(null);
   }, [contact]);
 
   useEffect(() => {
@@ -74,6 +95,12 @@ export default function ContactDetail() {
       copyTimerRef.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    if (!tagMessage) return;
+    const timer = setTimeout(() => setTagMessage(null), 2500);
+    return () => clearTimeout(timer);
+  }, [tagMessage]);
 
   const knownGroups = useMemo(() => loadFactGroups(), []);
   const aiSuggestions = useMemo(
@@ -177,6 +204,51 @@ export default function ContactDetail() {
       console.error('Не удалось обновить контакт', error);
       setEditError('Не удалось сохранить изменения. Попробуйте позже.');
     }
+  };
+
+  const handleAddTag = () => {
+    if (!contact || !allowCustomTags) return;
+    const label = tagLabel.trim();
+    if (!label) {
+      setTagError('Введите название тега');
+      return;
+    }
+    if (label.length > 32) {
+      setTagError('Максимум 32 символа');
+      return;
+    }
+    if (contact.tags.some((tag) => tag.label.toLowerCase() === label.toLowerCase())) {
+      setTagError('Такой тег уже есть');
+      return;
+    }
+    if (contact.tags.length >= 12) {
+      setTagError('Можно добавить до 12 тегов');
+      return;
+    }
+
+    setTagError(null);
+    const newTag = createContactTag(label, tagColor);
+    const updated: Contact = {
+      ...contact,
+      tags: [newTag, ...contact.tags],
+      lastUpdated: Date.now(),
+    };
+    updateContact(updated);
+    setContact(updated);
+    setTagLabel('');
+    setTagMessage('Тег добавлен');
+  };
+
+  const handleRemoveTag = (tagId: string) => {
+    if (!contact || !allowCustomTags) return;
+    const updated: Contact = {
+      ...contact,
+      tags: contact.tags.filter((tag) => tag.id !== tagId),
+      lastUpdated: Date.now(),
+    };
+    updateContact(updated);
+    setContact(updated);
+    setTagMessage(null);
   };
 
   const handleCopySuggestion = useCallback(
@@ -313,6 +385,102 @@ export default function ContactDetail() {
             </ul>
           )}
         </div>
+
+        <section className="mt-6 rounded-xl border border-slate-800 bg-slate-900/70 p-5 shadow">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-xl font-semibold text-slate-100">Теги контакта</h2>
+            {!allowCustomTags && (
+              <p className="text-xs text-slate-500">
+                Доступно в InNet Pro: отмечайте людей как «семья», «друг», «коллега» и подсвечивайте их цветом.
+              </p>
+            )}
+          </div>
+          {contact.tags.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-400">
+              {allowCustomTags
+                ? 'Добавьте первый тег, чтобы выделить роль этого контакта.'
+                : 'Теги появятся после подключения подписки Pro.'}
+            </p>
+          ) : (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {contact.tags.map((tag) => (
+                <span
+                  key={tag.id}
+                  className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold"
+                  style={{
+                    borderColor: withAlpha(tag.color, 0.6),
+                    backgroundColor: withAlpha(tag.color, 0.16),
+                    color: tag.color,
+                  }}
+                >
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: tag.color }} />
+                  {tag.label}
+                  {allowCustomTags && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveTag(tag.id)}
+                      className="ml-1 text-[10px] uppercase tracking-wide text-slate-400 hover:text-slate-100"
+                      aria-label={`Удалить тег ${tag.label}`}
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+          {allowCustomTags && (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                handleAddTag();
+              }}
+              className="mt-4 space-y-3"
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                <input
+                  type="text"
+                  value={tagLabel}
+                  onChange={(event) => {
+                    setTagLabel(event.target.value);
+                    setTagError(null);
+                    setTagMessage(null);
+                  }}
+                  placeholder="Например, коллега"
+                  className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-primary"
+                />
+                <button
+                  type="submit"
+                  className="w-full sm:w-auto rounded-full bg-primary px-4 py-2 text-xs font-semibold text-slate-950 transition hover:bg-secondary"
+                >
+                  Добавить тег
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {CONTACT_TAG_COLOR_PRESETS.map((colorOption) => {
+                  const active = colorOption === tagColor;
+                  return (
+                    <button
+                      key={colorOption}
+                      type="button"
+                      onClick={() => {
+                        setTagColor(colorOption);
+                        setTagMessage(null);
+                      }}
+                      className={`h-8 w-8 rounded-full border-2 transition ${
+                        active ? 'border-white shadow-[0_0_0_3px_rgba(255,255,255,0.25)]' : 'border-transparent opacity-70 hover:opacity-100'
+                      }`}
+                      style={{ backgroundColor: colorOption }}
+                      aria-label={`Выбрать цвет ${colorOption}`}
+                    />
+                  );
+                })}
+              </div>
+              {tagError && <p className="text-xs text-red-400">{tagError}</p>}
+              {tagMessage && <p className="text-xs text-emerald-300">{tagMessage}</p>}
+            </form>
+          )}
+        </section>
 
         {entitlements.allowAiSuggestions ? (
           <section className="mt-6 rounded-xl border border-slate-800 bg-slate-900/70 p-5 shadow">

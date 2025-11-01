@@ -88,8 +88,8 @@ export default function Home() {
             Добавь в сетку!
           </h1>
           <div className="text-2xl sm:text-3xl font-semibold mb-6 min-h-[2.5em] h-[2.5em] flex items-end justify-center md:justify-start">
-          <span className="transition-colors duration-300 text-white">{displayed}</span>
-          <span className="w-px h-[1.2em] ml-1 bg-primary animate-blink rounded-sm" style={{display:'inline-block'}} />
+          <span className="transition-colors duration-300 text-white break-words">{displayed}</span>
+          <span aria-hidden="true" className="w-px h-[1.2em] ml-1 bg-primary animate-blink rounded-sm align-text-bottom self-end" />
           </div>
           <p className="text-lg text-gray-300 mb-8">
             InNet — это ваш мост к новым знакомствам. Создавайте персонализированные QR‑коды, делитесь фактами о себе и строите сеть связей, которая останется с вами навсегда.

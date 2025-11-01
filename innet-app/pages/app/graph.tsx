@@ -18,6 +18,19 @@ const ForceGraph2D = dynamic(
   { ssr: false }
 ) as unknown as typeof import('react-force-graph-2d').default;
 const SINGLE_NODE_ZOOM = 4.2;
+const FALLBACK_NODE_COLOR = '#818CF8';
+
+const withAlpha = (hex: string | undefined, alpha: number) => {
+  if (!hex || !hex.startsWith('#')) {
+    return `rgba(129, 140, 248, ${alpha})`;
+  }
+  const value = hex.replace('#', '');
+  const base = value.slice(0, 6);
+  const alphaHex = Math.round(Math.min(Math.max(alpha, 0), 1) * 255)
+    .toString(16)
+    .padStart(2, '0');
+  return `#${base}${alphaHex}`;
+};
 
 type PositionedNode = GraphData['nodes'][number] & {
   x?: number;
@@ -32,6 +45,32 @@ type PositionedGraph = GraphData & {
 
 type GraphNode = NodeObject<PositionedNode>;
 type GraphLink = LinkObject<PositionedNode, GraphData['links'][number]>;
+
+function getNodeLevel(node: GraphData['nodes'][number]): number {
+  if (typeof node.level === 'number') return node.level;
+  if (node.id === 'me') return 0;
+  return 1;
+}
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = Math.imul(31, hash) + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash >>> 0;
+}
+
+function createNoiseGenerator(key: string): () => number {
+  let seed = hashString(key) || 0x1f123bb5;
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 function layoutGraph(data: GraphData, width: number, height: number): PositionedGraph {
   const rawNodes = data.nodes ?? [];
   if (!rawNodes.length) {
@@ -41,26 +80,50 @@ function layoutGraph(data: GraphData, width: number, height: number): Positioned
   const w = Math.max(width, 320);
   const h = Math.max(height, 320);
   const minDimension = Math.min(w, h);
-  const others = rawNodes.filter((node) => node.id !== 'me');
+  const others = rawNodes
+    .filter((node) => getNodeLevel(node) > 0)
+    .sort((a, b) => {
+      const levelA = getNodeLevel(a);
+      const levelB = getNodeLevel(b);
+      if (levelA !== levelB) return levelA - levelB;
+      const nameA = (a.name ?? '').toString();
+      const nameB = (b.name ?? '').toString();
+      const nameComparison = nameA.localeCompare(nameB);
+      if (nameComparison !== 0) return nameComparison;
+      const idA = String(a.id);
+      const idB = String(b.id);
+      return idA.localeCompare(idB);
+    });
 
-  const positions = new Map<string | number, { x: number; y: number }>();
-  const baseRadius = Math.max(minDimension * 0.24, 120);
-  const ringGap = Math.max(minDimension * 0.16, 90);
+  const positions = new Map<string, { x: number; y: number }>();
+  const baseRadius = Math.max(minDimension * 0.26, 140);
+  const ringGap = Math.max(minDimension * 0.18, 110);
+  const ringShiftMagnitude = Math.max(minDimension * 0.05, 32);
+  const localShiftMagnitude = Math.max(minDimension * 0.02, 10);
 
   let offset = 0;
   let ringIndex = 0;
+
   while (offset < others.length) {
-    const capacity = Math.min(
-      others.length - offset,
-      Math.max(6, 8 + ringIndex * 6)
-    );
+    const remaining = others.length - offset;
+    const capacity = Math.min(remaining, Math.max(6, 8 + ringIndex * 6));
     const radius = baseRadius + ringIndex * ringGap;
+    const ringNoise = createNoiseGenerator(`ring-${ringIndex}-${capacity}`);
+    const ringShiftX = (ringNoise() - 0.5) * ringShiftMagnitude;
+    const ringShiftY = (ringNoise() - 0.5) * ringShiftMagnitude;
 
     for (let i = 0; i < capacity && offset + i < others.length; i += 1) {
       const node = others[offset + i];
-      const angle = (2 * Math.PI * i) / capacity;
-      const x = radius * Math.cos(angle);
-      const y = radius * Math.sin(angle);
+      const baseAngle = (2 * Math.PI * i) / capacity;
+      const nodeNoise = createNoiseGenerator(`node-${node.id}-${ringIndex}`);
+      const angleJitter = (nodeNoise() - 0.5) * (2 * Math.PI / Math.max(capacity, 8));
+      const radialJitter = (nodeNoise() - 0.5) * Math.min(ringGap * 0.6, radius * 0.25);
+      const shiftX = (nodeNoise() - 0.5) * localShiftMagnitude;
+      const shiftY = (nodeNoise() - 0.5) * localShiftMagnitude;
+      const angle = baseAngle + angleJitter;
+      const distance = radius + radialJitter;
+      const x = ringShiftX + distance * Math.cos(angle) + shiftX;
+      const y = ringShiftY + distance * Math.sin(angle) + shiftY;
       positions.set(node.id, { x, y });
     }
 
@@ -71,7 +134,7 @@ function layoutGraph(data: GraphData, width: number, height: number): Positioned
   return {
     ...data,
     nodes: rawNodes.map((node) => {
-      if (node.id === 'me') {
+      if (getNodeLevel(node) === 0) {
         return { ...node, x: 0, y: 0, fx: 0, fy: 0 };
       }
       const pos = positions.get(node.id);
@@ -138,7 +201,8 @@ export default function GraphPage() {
   const handleNodeClick = useCallback(
     (node: GraphNode) => {
       const nodeId = typeof node.id === 'number' ? String(node.id) : node.id;
-      if (!nodeId || nodeId === 'me') return;
+      const level = typeof node.level === 'number' ? node.level : nodeId === 'me' ? 0 : 1;
+      if (!nodeId || level === 0 || level >= 2) return;
       router.push(`/app/contacts/${nodeId}`);
     },
     [router]
@@ -211,22 +275,28 @@ export default function GraphPage() {
               enableZoomInteraction
               nodeLabel={(node: GraphNode) => node.name ?? ''}
               nodeCanvasObject={(node: GraphNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
-                const isRoot = node.id === 'me';
-                const radius = isRoot ? 18 : 12;
-                const color = isRoot ? '#38BDF8' : '#818CF8';
-                const halo = isRoot ? '#0EA5E9' : '#312E81';
+                const level = typeof node.level === 'number' ? node.level : node.id === 'me' ? 0 : 1;
+                const isRoot = level === 0;
+                const isSecondLevel = level >= 2;
+                const radius = isRoot ? 18 : isSecondLevel ? 10 : 12;
+                const baseColor = isRoot
+                  ? '#38BDF8'
+                  : isSecondLevel
+                    ? '#22C55E'
+                    : (typeof node.tagColor === 'string' && node.tagColor) || FALLBACK_NODE_COLOR;
+                const haloColor = isRoot
+                  ? withAlpha(baseColor, 0.45)
+                  : withAlpha(baseColor, isSecondLevel ? 0.3 : 0.25);
 
                 ctx.save();
                 ctx.beginPath();
                 ctx.arc(node.x ?? 0, node.y ?? 0, radius + 3, 0, 2 * Math.PI, false);
-                ctx.fillStyle = halo;
-                ctx.globalAlpha = 0.35;
+                ctx.fillStyle = haloColor;
                 ctx.fill();
-                ctx.globalAlpha = 1;
 
                 ctx.beginPath();
                 ctx.arc(node.x ?? 0, node.y ?? 0, radius, 0, 2 * Math.PI, false);
-                ctx.fillStyle = color;
+                ctx.fillStyle = baseColor;
                 ctx.fill();
 
                 const label = node.name ?? '';
