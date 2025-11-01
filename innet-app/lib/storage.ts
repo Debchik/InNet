@@ -75,6 +75,7 @@ export interface UserAccount {
   quickSignup?: boolean;
   plan?: PlanId;
   planActivatedAt?: number;
+  supabaseUid?: string | null;
 }
 
 /* Key names used for persisting to localStorage */

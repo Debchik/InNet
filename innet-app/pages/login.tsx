@@ -14,6 +14,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { DEFAULT_PLAN } from '../lib/plans';
 import { setCurrentPlan } from '../lib/subscription';
 import { normalizePhone } from '../utils/contact';
+import { recoverSupabaseEmailAndUpdateLocal } from '../lib/userEmailRecovery';
 
 /**
  * Login page. This simplistic implementation stores a flag in localStorage
@@ -35,17 +36,27 @@ export default function Login() {
     const syncFromSession = async () => {
       const { data } = await supabase.auth.getUser();
       const sUser = data.user;
-      if (!sUser?.email) return;
+      if (!sUser) return;
+      const supabaseUid = sUser.id?.trim() ?? '';
+      const supabaseEmail = sUser.email?.trim().toLowerCase() ?? '';
+      const fullName = (sUser.user_metadata?.full_name as string | undefined)?.trim() || '';
+
       const users = loadUsers();
-      let user = users.find(
-        (u) => u.email.trim().toLowerCase() === sUser.email!.trim().toLowerCase()
-      );
+      let user: UserAccount | undefined =
+        users.find((entry) => supabaseUid && entry.supabaseUid?.trim() === supabaseUid) ??
+        (supabaseEmail
+          ? users.find(
+              (entry) => entry.email.trim().toLowerCase() === supabaseEmail
+            )
+          : undefined);
+
+      let updatedUsers = users;
       if (!user) {
         user = {
           id: uuidv4(),
-          email: sUser.email!,
-          password: uuidv4().slice(0,12),
-          name: (sUser.user_metadata?.full_name as string | undefined) || 'Без имени',
+          email: supabaseEmail || supabaseUid,
+          password: uuidv4().slice(0, 12),
+          name: fullName || 'Без имени',
           surname: undefined,
           avatar: undefined,
           avatarType: undefined,
@@ -58,14 +69,52 @@ export default function Login() {
           verified: Boolean(sUser.email_confirmed_at),
           plan: DEFAULT_PLAN,
           planActivatedAt: Date.now(),
-        } as UserAccount;
-        saveUsers([user, ...users]);
+          supabaseUid: supabaseUid || null,
+        };
+        updatedUsers = [user, ...users];
+        saveUsers(updatedUsers);
+      } else {
+        let modified = false;
+        let nextUser = user;
+        if (supabaseUid && user.supabaseUid !== supabaseUid) {
+          nextUser = { ...nextUser, supabaseUid };
+          modified = true;
+        }
+        if (supabaseEmail && user.email.trim().toLowerCase() !== supabaseEmail) {
+          nextUser = { ...nextUser, email: supabaseEmail };
+          modified = true;
+        }
+        if (fullName && user.name !== fullName) {
+          nextUser = { ...nextUser, name: user.name || fullName };
+        }
+        if (modified || nextUser !== user) {
+          updatedUsers = users.map((entry) => (entry.id === nextUser.id ? nextUser : entry));
+          saveUsers(updatedUsers);
+          user = nextUser;
+        }
       }
 
+      if (supabaseUid && !supabaseEmail) {
+        const recovery = await recoverSupabaseEmailAndUpdateLocal(supabaseUid, user);
+        if (recovery?.email) {
+          user = recovery.user;
+        }
+      }
+
+      if (!user) return;
       try {
         localStorage.setItem('innet_logged_in', 'true');
         localStorage.setItem('innet_current_user_id', user.id);
-        localStorage.setItem('innet_current_user_email', user.email);
+        if (user.email) {
+          localStorage.setItem('innet_current_user_email', user.email);
+        } else {
+          localStorage.removeItem('innet_current_user_email');
+        }
+        if (user.supabaseUid) {
+          localStorage.setItem('innet_current_user_supabase_uid', user.supabaseUid);
+        } else {
+          localStorage.removeItem('innet_current_user_supabase_uid');
+        }
         localStorage.setItem('innet_current_user_name', user.name);
         localStorage.setItem('innet_current_user_categories', JSON.stringify(user.categories ?? []));
         localStorage.setItem('innet_current_user_facts', JSON.stringify(user.factsByCategory ?? {}));
@@ -133,7 +182,16 @@ export default function Login() {
     if (typeof window !== 'undefined') {
       localStorage.setItem('innet_logged_in', 'true');
       localStorage.setItem('innet_current_user_id', user.id);
-      localStorage.setItem('innet_current_user_email', user.email);
+      if (user.email) {
+        localStorage.setItem('innet_current_user_email', user.email);
+      } else {
+        localStorage.removeItem('innet_current_user_email');
+      }
+      if (user.supabaseUid) {
+        localStorage.setItem('innet_current_user_supabase_uid', user.supabaseUid);
+      } else {
+        localStorage.removeItem('innet_current_user_supabase_uid');
+      }
       localStorage.setItem('innet_current_user_name', user.name);
       localStorage.setItem('innet_current_user_categories', JSON.stringify(user.categories));
       localStorage.setItem('innet_current_user_facts', JSON.stringify(user.factsByCategory));

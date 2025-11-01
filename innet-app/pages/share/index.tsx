@@ -240,6 +240,7 @@ export default function ShareLandingPage() {
           createdAt: Date.now(),
           verified: true,
           quickSignup: true,
+          supabaseUid: null,
         };
 
         saveUsers([newUser, ...users]);
@@ -516,7 +517,16 @@ function establishSession(user: UserAccount): void {
   try {
     localStorage.setItem('innet_logged_in', 'true');
     localStorage.setItem('innet_current_user_id', user.id);
-    localStorage.setItem('innet_current_user_email', user.email);
+    if (user.email) {
+      localStorage.setItem('innet_current_user_email', user.email);
+    } else {
+      localStorage.removeItem('innet_current_user_email');
+    }
+    if (user.supabaseUid) {
+      localStorage.setItem('innet_current_user_supabase_uid', user.supabaseUid);
+    } else {
+      localStorage.removeItem('innet_current_user_supabase_uid');
+    }
     localStorage.setItem('innet_current_user_name', user.name);
     localStorage.setItem('innet_current_user_categories', JSON.stringify(user.categories ?? []));
     localStorage.setItem('innet_current_user_facts', JSON.stringify(user.factsByCategory ?? {}));

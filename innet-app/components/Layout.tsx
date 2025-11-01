@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
+import { legalContactInfo } from '../data/legal';
 
 interface LayoutProps {
   children: ReactNode;
@@ -248,8 +249,8 @@ export default function Layout({ children }: LayoutProps) {
           <Link href="/legal/requisites" className="hover:text-primary">
             Контакты и реквизиты
           </Link>
-          <a href="mailto:support@innet.app" className="hover:text-primary">
-            support@innet.app
+          <a href={`mailto:${legalContactInfo.supportEmail}`} className="hover:text-primary">
+            {legalContactInfo.supportEmail}
           </a>
         </div>
         <p>© {year} InNet. Все права защищены.</p>

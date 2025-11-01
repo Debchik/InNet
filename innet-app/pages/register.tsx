@@ -19,6 +19,7 @@ import { DEFAULT_PLAN } from '../lib/plans';
 import { setCurrentPlan } from '../lib/subscription';
 import { isEmail, isPhone, normalizePhone } from '../utils/contact';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { recoverSupabaseEmailAndUpdateLocal } from '../lib/userEmailRecovery';
 
 type StepOneInputs = {
   contact: string;
@@ -30,6 +31,7 @@ type Credentials = {
   phone: string;
   password: string;
   confirmed: boolean;
+  supabaseUid?: string | null;
 };
 
 type AvatarChoice =
@@ -152,31 +154,47 @@ export default function Register() {
     if (typeof window === 'undefined') return;
     let rawEmail: string | null = null;
     let rawFullName: string | null = null;
+    let rawSupabaseUid: string | null = null;
     try {
       rawEmail = window.sessionStorage.getItem('innet_oauth_email');
       rawFullName = window.sessionStorage.getItem('innet_oauth_full_name');
+      rawSupabaseUid = window.sessionStorage.getItem('innet_oauth_supabase_uid');
     } catch {
       return;
     }
 
     const normalizedEmail = rawEmail?.trim().toLowerCase();
     const trimmedFullName = rawFullName?.trim();
-    if (!normalizedEmail && !trimmedFullName) {
+    const normalizedSupabaseUid = rawSupabaseUid?.trim() ?? null;
+
+    if (!normalizedEmail && !trimmedFullName && !normalizedSupabaseUid) {
       return;
     }
 
     oauthPrefillAppliedRef.current = true;
 
-    if (normalizedEmail) {
-      setCredentials((prev) => {
-        const base: Credentials = prev
-          ? { ...prev, email: normalizedEmail }
-          : { email: normalizedEmail, password: '', phone: '', confirmed: true };
-        return base;
-      });
-      if (step !== 2) {
-        setStep(2);
+    setCredentials((prev) => {
+      if (prev) {
+        const next: Credentials = { ...prev };
+        if (normalizedEmail) {
+          next.email = normalizedEmail;
+        }
+        if (normalizedSupabaseUid) {
+          next.supabaseUid = normalizedSupabaseUid;
+        }
+        return next;
       }
+      return {
+        email: normalizedEmail ?? '',
+        phone: '',
+        password: '',
+        confirmed: true,
+        supabaseUid: normalizedSupabaseUid ?? null,
+      };
+    });
+
+    if (step !== 2) {
+      setStep(2);
     }
 
     if (trimmedFullName) {
@@ -207,13 +225,19 @@ export default function Register() {
     if (!supabase) return;
     const primeFromSession = async () => {
       const { data } = await supabase.auth.getUser();
-      const email = data.user?.email ?? '';
-      const fullName = (data.user?.user_metadata?.full_name as string | undefined) || '';
-      if (email) {
-        setCredentials({ email, password: '', phone: '', confirmed: true });
-        if (fullName && !name) setName(fullName);
-        setStep(2);
-      }
+      const sessionUser = data.user;
+      if (!sessionUser) return;
+      const email = sessionUser.email?.trim().toLowerCase() ?? '';
+      const fullName = (sessionUser.user_metadata?.full_name as string | undefined) || '';
+      setCredentials({
+        email,
+        password: '',
+        phone: '',
+        confirmed: true,
+        supabaseUid: sessionUser.id ?? null,
+      });
+      if (fullName && !name) setName(fullName);
+      setStep(2);
     };
     void primeFromSession();
     // also listen for changes
@@ -376,6 +400,7 @@ export default function Register() {
       phone: normalizedPhone,
       password: data.password,
       confirmed: !requiresEmailConfirmation,
+      supabaseUid: null,
     });
     setStep(2);
   };
@@ -582,64 +607,130 @@ export default function Register() {
     let effectiveEmail = baseCredentials.email.trim().toLowerCase();
     const effectivePhone = normalizePhone(baseCredentials.phone);
 
-    const resolveEmail = async (): Promise<string | undefined> => {
-      const fromCredentials = credentials?.email?.trim().toLowerCase();
-      if (fromCredentials) return fromCredentials;
+    const resolveSupabaseIdentity = async (): Promise<{ email?: string; supabaseUid?: string }> => {
+      const identity: { email?: string; supabaseUid?: string } = {};
+      const credentialEmail = credentials?.email?.trim().toLowerCase();
+      const credentialUid = credentials?.supabaseUid?.trim() || undefined;
+      if (credentialEmail) {
+        identity.email = credentialEmail;
+      }
+      if (credentialUid) {
+        identity.supabaseUid = credentialUid;
+      }
+      if (identity.email && identity.supabaseUid) {
+        return identity;
+      }
 
       if (supabase) {
         try {
           const { data } = await supabase.auth.getUser();
-          const sessionEmail = data.user?.email?.trim().toLowerCase();
-          if (sessionEmail) {
+          const sessionUser = data.user;
+          if (sessionUser) {
+            const sessionEmail = sessionUser.email?.trim().toLowerCase();
+            const sessionUid = sessionUser.id?.trim();
+
             setCredentials((prev) => {
               if (prev) {
-                return { ...prev, email: sessionEmail };
+                const next: Credentials = { ...prev };
+                if (sessionEmail) {
+                  next.email = sessionEmail;
+                }
+                if (sessionUid) {
+                  next.supabaseUid = sessionUid;
+                }
+                return next;
               }
-              return { email: sessionEmail, password: '', phone: '', confirmed: true };
+              return {
+                email: sessionEmail ?? '',
+                phone: '',
+                password: '',
+                confirmed: true,
+                supabaseUid: sessionUid ?? null,
+              };
             });
-            return sessionEmail;
+
+            if (sessionEmail && !identity.email) {
+              identity.email = sessionEmail;
+            }
+            if (sessionUid && !identity.supabaseUid) {
+              identity.supabaseUid = sessionUid;
+            }
+            if (identity.email && identity.supabaseUid) {
+              return identity;
+            }
           }
         } catch (error) {
-          console.warn('[register] Failed to recover email from Supabase session', error);
+          console.warn('[register] Failed to recover identity from Supabase session', error);
         }
       }
 
       if (typeof window !== 'undefined') {
         try {
           const storedEmail = window.sessionStorage.getItem('innet_oauth_email');
-          if (storedEmail) {
-            const normalized = storedEmail.trim().toLowerCase();
+          const storedUid = window.sessionStorage.getItem('innet_oauth_supabase_uid');
+          if (storedUid && !identity.supabaseUid) {
+            const normalizedUid = storedUid.trim();
+            if (normalizedUid) {
+              identity.supabaseUid = normalizedUid;
+            }
+          }
+          if (storedEmail && !identity.email) {
+            const normalizedEmail = storedEmail.trim().toLowerCase();
+            if (normalizedEmail) {
+              identity.email = normalizedEmail;
+            }
+          }
+          if (identity.email || identity.supabaseUid) {
             setCredentials((prev) => {
               if (prev) {
-                return { ...prev, email: normalized };
+                const next: Credentials = { ...prev };
+                if (identity.email) {
+                  next.email = identity.email;
+                }
+                if (identity.supabaseUid) {
+                  next.supabaseUid = identity.supabaseUid;
+                }
+                return next;
               }
-              return { email: normalized, password: '', phone: '', confirmed: true };
+              return {
+                email: identity.email ?? '',
+                phone: '',
+                password: '',
+                confirmed: true,
+                supabaseUid: identity.supabaseUid ?? null,
+              };
             });
-            return normalized;
           }
         } catch {
           /* ignore storage issues */
         }
       }
 
-      return undefined;
+      return identity;
     };
 
+    let supabaseUid = credentials?.supabaseUid?.trim() || null;
+
     if (!effectiveEmail && !effectivePhone) {
-      const resolvedEmail = await resolveEmail();
-      if (!resolvedEmail) {
+      const identity = await resolveSupabaseIdentity();
+      if (identity.email) {
+        effectiveEmail = identity.email;
+      }
+      if (identity.supabaseUid) {
+        supabaseUid = identity.supabaseUid;
+      }
+      if (!effectiveEmail && !effectivePhone && !supabaseUid) {
         setStepTwoErrors([
-          'Не удалось получить email аккаунта после входа через Google. Повторите попытку или зарегистрируйтесь вручную.',
+          'Не удалось получить данные аккаунта после входа через Google. Повторите попытку или зарегистрируйтесь вручную.',
         ]);
         return;
       }
-      effectiveEmail = resolvedEmail;
     }
 
-    const loginIdentifier = effectiveEmail || effectivePhone;
+    const loginIdentifier = effectiveEmail || effectivePhone || supabaseUid;
     if (!loginIdentifier) {
       setStepTwoErrors([
-        'Укажите email или телефон, чтобы завершить регистрацию.',
+        'Укажите email, телефон или войдите через Google, чтобы завершить регистрацию.',
       ]);
       return;
     }
@@ -649,6 +740,7 @@ export default function Register() {
       phone: effectivePhone,
       password: baseCredentials.password,
       confirmed: baseCredentials.confirmed,
+      supabaseUid,
     };
     setCredentials(effectiveCredentials);
 
@@ -698,11 +790,18 @@ export default function Register() {
       verified: emailVerified,
       plan: DEFAULT_PLAN,
       planActivatedAt: Date.now(),
+      supabaseUid: supabaseUid ?? null,
     };
 
     const users = loadUsers();
     const normalizedLogin = loginIdentifier.trim().toLowerCase();
     const withoutDuplicate = users.filter((entry) => {
+      if (supabaseUid) {
+        const entryUid = entry.supabaseUid?.trim();
+        if (entryUid && entryUid === supabaseUid) {
+          return false;
+        }
+      }
       const entryLogin = entry.email.trim().toLowerCase();
       if (entryLogin === normalizedLogin) {
         return false;
@@ -720,12 +819,22 @@ export default function Register() {
     if (typeof window !== 'undefined') {
       localStorage.setItem('innet_logged_in', 'true');
       localStorage.setItem('innet_current_user_id', user.id);
-      localStorage.setItem('innet_current_user_email', user.email);
+      const preferredContact = effectiveEmail || effectivePhone || '';
+      if (preferredContact) {
+        localStorage.setItem('innet_current_user_email', preferredContact);
+      } else {
+        localStorage.removeItem('innet_current_user_email');
+      }
       localStorage.setItem('innet_current_user_name', user.name);
       localStorage.setItem('innet_current_user_categories', JSON.stringify(user.categories));
       localStorage.setItem('innet_current_user_facts', JSON.stringify(user.factsByCategory));
       localStorage.setItem('innet_current_user_verified', emailVerified ? 'true' : 'false');
       localStorage.setItem('innet_qr_select_all_groups', 'true');
+      if (user.supabaseUid) {
+        localStorage.setItem('innet_current_user_supabase_uid', user.supabaseUid);
+      } else {
+        localStorage.removeItem('innet_current_user_supabase_uid');
+      }
       window.dispatchEvent(new Event('innet-auth-refresh'));
 
       setCurrentPlan(DEFAULT_PLAN);
@@ -771,6 +880,31 @@ export default function Register() {
         surname: user.surname,
         phone: user.phone,
       });
+    } else if (supabaseUid) {
+      void recoverSupabaseEmailAndUpdateLocal(supabaseUid, user).then((result) => {
+        if (result?.email) {
+          user.email = result.user.email;
+          user.supabaseUid = result.user.supabaseUid ?? null;
+          setCredentials((prev) =>
+            prev
+              ? { ...prev, email: result.email, supabaseUid: result.user.supabaseUid ?? null }
+              : prev
+          );
+          void syncProfileToSupabase({
+            email: result.email,
+            name: result.user.name,
+            surname: result.user.surname,
+            phone: result.user.phone,
+          });
+          if (typeof window !== 'undefined') {
+            try {
+              window.sessionStorage.setItem('innet_oauth_email', result.email);
+            } catch {
+              /* ignore storage update errors */
+            }
+          }
+        }
+      });
     }
 
     setIsCompleting(false);
@@ -778,6 +912,7 @@ export default function Register() {
       try {
         window.sessionStorage.removeItem('innet_oauth_email');
         window.sessionStorage.removeItem('innet_oauth_full_name');
+        window.sessionStorage.removeItem('innet_oauth_supabase_uid');
       } catch {/* ignore storage cleanup errors */}
     }
     router.push('/app/qr');

@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, RefObject } from 'react';
 import Layout from '../../components/Layout';
 import OnboardingHint from '../../components/onboarding/OnboardingHint';
-import { loadUsers, saveUsers } from '../../lib/storage';
+import { loadUsers, saveUsers, type UserAccount } from '../../lib/storage';
 import { syncProfileToSupabase } from '../../lib/profileSync';
 import { usePlan } from '../../hooks/usePlan';
 import { usePrivacy, PrivacyLevel } from '../../hooks/usePrivacy';
 import { useReminders } from '../../hooks/useReminders';
 import { formatRelative } from '../../utils/time';
 import { isEmail } from '../../utils/contact';
+import { recoverSupabaseEmailAndUpdateLocal } from '../../lib/userEmailRecovery';
 
 type ProfileInfo = {
   id: string;
@@ -22,6 +23,7 @@ type ProfileInfo = {
   avatarType?: 'preset' | 'upload';
   verified: boolean;
   pendingVerificationCode?: string;
+   supabaseUid?: string | null;
 };
 
 const PRESET_AVATAR_STYLES: Record<string, string> = {
@@ -63,6 +65,7 @@ export default function ProfilePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const avatarVideoRef = useRef<HTMLVideoElement>(null);
   const avatarStreamRef = useRef<MediaStream | null>(null);
+  const emailRecoveryAttempts = useRef(new Set<string>());
   const [avatarCameraOpen, setAvatarCameraOpen] = useState(false);
   const [avatarCameraError, setAvatarCameraError] = useState<string | null>(null);
   const [avatarCameraReady, setAvatarCameraReady] = useState(false);
@@ -107,18 +110,32 @@ export default function ProfilePage() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const email = localStorage.getItem('innet_current_user_email') ?? '';
+    const storedContact = localStorage.getItem('innet_current_user_email') ?? '';
+    const storedSupabaseUid = localStorage.getItem('innet_current_user_supabase_uid') ?? '';
+    const storedUserId = localStorage.getItem('innet_current_user_id') ?? '';
     const storedUsers = loadUsers();
-    const user = storedUsers.find(
-      (entry) => entry.email.trim().toLowerCase() === email.trim().toLowerCase()
-    );
+    const user =
+      storedUsers.find((entry) => storedUserId && entry.id === storedUserId) ??
+      (storedSupabaseUid
+        ? storedUsers.find(
+            (entry) => entry.supabaseUid?.trim() === storedSupabaseUid.trim()
+          )
+        : undefined) ??
+      (storedContact
+        ? storedUsers.find(
+            (entry) => entry.email.trim().toLowerCase() === storedContact.trim().toLowerCase()
+          )
+        : undefined);
 
     if (user) {
+      const displayContact =
+        storedContact.trim() ||
+        (isEmail(user.email) ? user.email : '');
       setProfile({
         id: user.id,
         name: user.name,
         surname: user.surname,
-        email: user.email,
+        email: displayContact,
         phone: user.phone,
         telegram: user.telegram,
         instagram: user.instagram,
@@ -126,6 +143,7 @@ export default function ProfilePage() {
         avatarType: user.avatarType,
         verified: user.verified,
         pendingVerificationCode: user.pendingVerificationCode,
+        supabaseUid: user.supabaseUid ?? null,
       });
       setPhoneInput(user.phone ?? '');
       setTelegramInput(user.telegram ?? '');
@@ -143,12 +161,12 @@ export default function ProfilePage() {
       const fallbackId = localStorage.getItem('innet_current_user_id') ?? '';
       const fallbackVerified = localStorage.getItem('innet_current_user_verified') === 'true';
 
-      if (email || fallbackName) {
+      if (storedContact || fallbackName) {
         setProfile({
           id: fallbackId,
           name: fallbackName,
           surname: fallbackSurname || undefined,
-          email,
+          email: storedContact,
           phone: fallbackPhone || undefined,
           telegram: fallbackTelegram || undefined,
           instagram: fallbackInstagram || undefined,
@@ -156,6 +174,7 @@ export default function ProfilePage() {
           avatarType: fallbackAvatarType,
           verified: fallbackVerified,
           pendingVerificationCode: undefined,
+          supabaseUid: storedSupabaseUid || null,
         });
         setPhoneInput(fallbackPhone ?? '');
         setTelegramInput(fallbackTelegram ?? '');
@@ -165,6 +184,36 @@ export default function ProfilePage() {
 
     setIsReady(true);
   }, []);
+
+  useEffect(() => {
+    const supabaseUid = profile?.supabaseUid?.toString().trim();
+    if (!supabaseUid) return;
+    if (profile?.email && isEmail(profile.email)) return;
+    if (emailRecoveryAttempts.current.has(supabaseUid)) return;
+
+    emailRecoveryAttempts.current.add(supabaseUid);
+    let cancelled = false;
+
+    const run = async () => {
+      const result = await recoverSupabaseEmailAndUpdateLocal(supabaseUid);
+      if (!cancelled && result?.email) {
+        setProfile((previous) =>
+          previous
+            ? {
+                ...previous,
+                email: result.email,
+                supabaseUid: result.user.supabaseUid ?? previous.supabaseUid,
+              }
+            : previous
+        );
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile]);
 
   const stopAvatarStream = useCallback(() => {
     if (avatarStreamRef.current) {
@@ -241,13 +290,19 @@ const normalizeHandle = (value: string) => {
 };
 
 const isSameUser = useCallback(
-  (user: { id: string; email: string }, reference?: ProfileInfo | null) => {
+  (user: UserAccount, reference?: ProfileInfo | null) => {
     const base = reference ?? profile;
     if (!base) return false;
-    if (base.id) {
-      return user.id === base.id;
+    if (base.id && user.id === base.id) {
+      return true;
     }
-    return user.email.trim().toLowerCase() === base.email.trim().toLowerCase();
+    if (base.supabaseUid && user.supabaseUid && base.supabaseUid === user.supabaseUid) {
+      return true;
+    }
+    if (base.email) {
+      return user.email.trim().toLowerCase() === base.email.trim().toLowerCase();
+    }
+    return false;
   },
   [profile]
 );
