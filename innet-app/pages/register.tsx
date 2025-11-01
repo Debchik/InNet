@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, KeyboardEvent, MouseEvent, RefObject } from 'react';
 import { useForm } from 'react-hook-form';
 import { v4 as uuidv4 } from 'uuid';
@@ -18,6 +18,7 @@ import { FACT_CATEGORY_CONFIG, FACT_CATEGORY_LABELS } from '../lib/categories';
 import { DEFAULT_PLAN } from '../lib/plans';
 import { setCurrentPlan } from '../lib/subscription';
 import { isEmail, isPhone, normalizePhone } from '../utils/contact';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 type StepOneInputs = {
   contact: string;
@@ -86,13 +87,8 @@ export default function Register() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const supabase = useMemo(() => {
-    try {
-      return getSupabaseClient();
-    } catch {
-      return null;
-    }
-  }, []);
+  const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
+  const [supabaseError, setSupabaseError] = useState<string | null>(null);
 
   const oauthPrefillAppliedRef = useRef(false);
 
@@ -105,6 +101,51 @@ export default function Register() {
       setStep(2);
     }
   }, [router.isReady, router.query.oauth]);
+
+  useEffect(() => {
+    try {
+      const client = getSupabaseClient();
+      setSupabase(client);
+      setSupabaseError(null);
+    } catch (error) {
+      console.warn('[register] Supabase client unavailable', error);
+      setSupabase(null);
+      setSupabaseError(
+        'Google-регистрация недоступна: проверьте переменные NEXT_PUBLIC_SUPABASE_URL и NEXT_PUBLIC_SUPABASE_ANON_KEY.'
+      );
+    }
+  }, []);
+
+  const handleGoogleSignup = useCallback(() => {
+    if (!supabase) {
+      setSignupNotice({
+        type: 'error',
+        text:
+          supabaseError ??
+          'Регистрация через Google временно недоступна. Проверьте настройки Supabase.',
+      });
+      return;
+    }
+
+    const desiredPath = '/register?oauth=google';
+    const next = encodeURIComponent(desiredPath);
+    const redirectTo = `${window.location.origin}/auth/callback?type=signup&provider=google&next=${next}`;
+    try {
+      window.sessionStorage.setItem('innet_oauth_redirect', desiredPath);
+    } catch {
+      /* ignore storage restrictions */
+    }
+    void supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        },
+      },
+    });
+  }, [supabase, supabaseError]);
 
   useEffect(() => {
     if (oauthPrefillAppliedRef.current) return;
@@ -807,34 +848,20 @@ export default function Register() {
               >
                 Продолжить
               </button>
-              {supabase && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!supabase) return;
-                    const desiredPath = '/register?oauth=google';
-                    const next = encodeURIComponent(desiredPath);
-                    const redirectTo = `${window.location.origin}/auth/callback?type=signup&provider=google&next=${next}`;
-                    try {
-                      window.sessionStorage.setItem('innet_oauth_redirect', desiredPath);
-                    } catch {
-                      // ignore storage restrictions
-                    }
-                    void supabase.auth.signInWithOAuth({
-                      provider: 'google',
-                      options: {
-                        redirectTo,
-                        queryParams: {
-                          access_type: 'offline',
-                          prompt: 'consent',
-                        },
-                      },
-                    });
-                  }}
-                  className="w-full mt-2 border border-gray-600 text-gray-100 py-2 rounded-md hover:border-primary transition-colors"
-                >
-                  Зарегистрироваться через Google
-                </button>
+              <button
+                type="button"
+                onClick={handleGoogleSignup}
+                disabled={!supabase}
+                className={`w-full mt-2 border border-gray-600 text-gray-100 py-2 rounded-md transition-colors ${
+                  supabase ? 'hover:border-primary' : 'opacity-60 cursor-not-allowed'
+                }`}
+              >
+                Зарегистрироваться через Google
+              </button>
+              {supabaseError && (
+                <p className="text-xs text-yellow-400 mt-1">
+                  {supabaseError}
+                </p>
               )}
             </form>
           )}
