@@ -175,11 +175,23 @@ export default function Home() {
           <p className="text-gray-300 text-center max-w-3xl mx-auto mb-10">
             {companyDescription.shortAbout} Выберите подходящий тариф: начните бесплатно, а когда потребуется полный комплект инструментов — переходите на подписку InNet Pro.
           </p>
-          <div className="grid gap-8 md:grid-cols-2">
+          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
             {tariffPlans.map((plan) => (
-              <article key={plan.id} className="rounded-2xl border border-gray-700 bg-gray-800/70 p-6 flex flex-col shadow-lg">
-                <div className="flex items-center justify-between gap-4 mb-4">
-                  <h3 className="text-2xl font-semibold text-white">{plan.name}</h3>
+              <article
+                key={plan.id}
+                className={`rounded-2xl border bg-gray-800/70 p-6 flex flex-col shadow-lg ${
+                  plan.badge ? 'border-primary/60 shadow-[0_25px_60px_-35px_rgba(13,148,136,0.9)]' : 'border-gray-700'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-4 mb-4">
+                  <div>
+                    {plan.badge && (
+                      <span className="inline-flex items-center rounded-full bg-primary/20 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.3em] text-primary">
+                        {plan.badge}
+                      </span>
+                    )}
+                    <h3 className="mt-2 text-2xl font-semibold text-white">{plan.name}</h3>
+                  </div>
                   <div className="text-right">
                     <div className="text-3xl font-bold text-primary">{plan.price}</div>
                     <div className="text-xs uppercase tracking-wide text-gray-400">{plan.billingPeriod}</div>
@@ -194,8 +206,13 @@ export default function Home() {
                     </li>
                   ))}
                 </ul>
+                {plan.note && (
+                  <p className="mb-6 text-xs text-gray-400 border border-primary/20 rounded-lg bg-primary/5 px-3 py-2">
+                    {plan.note}
+                  </p>
+                )}
                 <Link
-                  href={plan.id === 'free' ? '/register' : '/register?plan=pro'}
+                  href={plan.id === 'free' ? '/register' : `/register?plan=${encodeURIComponent(plan.id)}`}
                   className="mt-auto inline-flex items-center justify-center rounded-md bg-primary px-5 py-3 text-sm font-semibold text-background transition hover:bg-secondary"
                 >
                   {plan.cta}

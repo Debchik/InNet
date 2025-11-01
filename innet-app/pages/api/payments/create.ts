@@ -1,19 +1,19 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createPayment } from '../../../lib/payments/yookassa';
-import { rememberPayment } from '../../../lib/payments/store';
+import { rememberPayment, PlanProduct } from '../../../lib/payments/store';
 
 type CreatePaymentBody = {
-  amount?: number;
-  description?: string;
   returnUrl?: string;
   userId?: string;
   email?: string;
+  planId?: string;
 };
 
 type SuccessResponse = {
   ok: true;
   paymentId: string;
   confirmationUrl: string;
+  planId: PlanProduct;
 };
 
 type ErrorResponse = {
@@ -21,8 +21,16 @@ type ErrorResponse = {
   message: string;
 };
 
-const DEFAULT_AMOUNT = 199;
-const DEFAULT_DESCRIPTION = 'Подписка InNet Pro';
+const PLAN_CATALOG: Record<PlanProduct, { amount: number; description: string }> = {
+  'pro-monthly': {
+    amount: 249,
+    description: 'Подписка InNet Pro — месяц',
+  },
+  'pro-annual': {
+    amount: 1790,
+    description: 'Подписка InNet Pro — год',
+  },
+};
 
 export default async function handler(
   req: NextApiRequest,
@@ -39,21 +47,23 @@ export default async function handler(
     return res.status(400).json({ ok: false, message: 'Не указан идентификатор пользователя' });
   }
 
-  const amount = typeof body.amount === 'number' && body.amount > 0 ? body.amount : DEFAULT_AMOUNT;
-  const description = body.description?.trim() || DEFAULT_DESCRIPTION;
+  const requestedPlan = (body.planId as PlanProduct | undefined) ?? 'pro-monthly';
+  const plan = PLAN_CATALOG[requestedPlan] ?? PLAN_CATALOG['pro-monthly'];
+  const planId: PlanProduct = PLAN_CATALOG[requestedPlan] ? requestedPlan : 'pro-monthly';
+
   const returnUrl =
     body.returnUrl?.trim() ||
     `${process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'}/app/qr?purchase=success`;
 
   try {
     const payment = await createPayment({
-      amount,
-      description,
+      amount: plan.amount,
+      description: plan.description,
       returnUrl,
       userId,
       email: body.email,
       metadata: {
-        planId: 'pro',
+        planId,
       },
     });
 
@@ -61,12 +71,13 @@ export default async function handler(
       throw new Error('ЮKassa вернула неожиданный ответ.');
     }
 
-    rememberPayment(payment.id, userId, 'pro');
+    rememberPayment(payment.id, userId, planId);
 
     return res.status(200).json({
       ok: true,
       paymentId: payment.id,
       confirmationUrl: (payment.confirmation as { confirmation_url: string }).confirmation_url,
+      planId,
     });
   } catch (error) {
     const message =

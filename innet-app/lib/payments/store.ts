@@ -1,20 +1,22 @@
 type PaymentStatus = 'pending' | 'succeeded' | 'canceled';
 
+export type PlanProduct = 'pro-monthly' | 'pro-annual';
+
 type StoredPayment = {
   paymentId: string;
   userId: string;
-  planId: 'pro';
+  planType: PlanProduct;
   status: PaymentStatus;
   createdAt: number;
 };
 
 const payments = new Map<string, StoredPayment>();
 
-export function rememberPayment(paymentId: string, userId: string, planId: 'pro' = 'pro') {
+export function rememberPayment(paymentId: string, userId: string, planType: PlanProduct) {
   payments.set(paymentId, {
     paymentId,
     userId,
-    planId,
+    planType,
     status: 'pending',
     createdAt: Date.now(),
   });

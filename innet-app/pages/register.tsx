@@ -710,6 +710,7 @@ export default function Register() {
     };
 
     let supabaseUid = credentials?.supabaseUid?.trim() || null;
+    let generatedLoginIdentifier: string | null = null;
 
     if (!effectiveEmail && !effectivePhone) {
       const identity = await resolveSupabaseIdentity();
@@ -719,15 +720,22 @@ export default function Register() {
       if (identity.supabaseUid) {
         supabaseUid = identity.supabaseUid;
       }
-      if (!effectiveEmail && !effectivePhone && !supabaseUid) {
-        setStepTwoErrors([
-          'Не удалось получить данные аккаунта после входа через Google. Повторите попытку или зарегистрируйтесь вручную.',
-        ]);
-        return;
-      }
     }
 
-    const loginIdentifier = effectiveEmail || effectivePhone || supabaseUid;
+    if (!effectiveEmail && !effectivePhone && !supabaseUid) {
+      generatedLoginIdentifier = `oauth-pending-${uuidv4()}`;
+      setSignupNotice((current) =>
+        current?.type === 'info' && current.text
+          ? current
+          : {
+              type: 'info',
+              text:
+                'Google не передал контактные данные. Аккаунт создадим, а почту или телефон можно заполнить позже в профиле.',
+            }
+      );
+    }
+
+    const loginIdentifier = effectiveEmail || effectivePhone || supabaseUid || generatedLoginIdentifier;
     if (!loginIdentifier) {
       setStepTwoErrors([
         'Укажите email, телефон или войдите через Google, чтобы завершить регистрацию.',
@@ -736,7 +744,7 @@ export default function Register() {
     }
 
     const effectiveCredentials: Credentials = {
-      email: effectiveEmail,
+      email: effectiveEmail || generatedLoginIdentifier || supabaseUid || '',
       phone: effectivePhone,
       password: baseCredentials.password,
       confirmed: baseCredentials.confirmed,
@@ -950,7 +958,7 @@ export default function Register() {
                       return 'Введите корректный email или номер телефона';
                     },
                   })}
-                  placeholder="например, name@example.com или +7 999 000-00-00"
+                  placeholder="network@connection.ru или +7 999 000-00-00"
                   className={`w-full px-3 py-2 bg-gray-700 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary ${
                     errors.contact ? 'border-red-500' : 'border-gray-600'
                   }`}
@@ -1014,6 +1022,20 @@ export default function Register() {
                   {signupNotice.text}
                 </div>
               )}
+              {supabase ? (
+                <div className="rounded-md border border-gray-700 bg-gray-900/40 px-4 py-3 space-y-2">
+                  <div className="text-sm text-gray-200">
+                    Нужен другой Google-аккаунт или хотите попробовать ещё раз?
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignup}
+                    className="w-full md:w-auto bg-transparent border border-gray-600 px-4 py-2 rounded-md text-sm text-gray-100 hover:border-primary transition-colors"
+                  >
+                    Повторить вход через Google
+                  </button>
+                </div>
+              ) : null}
               <div className="space-y-6">
                 <div className="space-y-3">
                   <p className="text-sm">Аватар (опционально)</p>

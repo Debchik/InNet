@@ -45,6 +45,13 @@ export default function PublicOfferPage() {
                   {legalContactInfo.supportEmail}, {legalContactInfo.phone}.
                 </p>
               </div>
+              <div>
+                <h3 className="text-sm font-semibold text-white mb-2">Поддержка</h3>
+                <p className="text-gray-300">
+                  Обращения принимаются по почте и телефону в рабочие часы ({legalContactInfo.workingHours}). Ответ на запрос —
+                  в течение 2 рабочих дней.
+                </p>
+              </div>
             </div>
           </section>
 

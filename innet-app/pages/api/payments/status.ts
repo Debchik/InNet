@@ -1,11 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getPayment } from '../../../lib/payments/store';
+import { getPayment, PlanProduct } from '../../../lib/payments/store';
 
 type SuccessResponse = {
   ok: true;
   status: 'pending' | 'succeeded' | 'canceled' | 'unknown';
   userId?: string;
-  planId?: 'pro';
+  planId?: PlanProduct;
 };
 
 type ErrorResponse = {
@@ -29,13 +29,13 @@ export default function handler(
 
   const entry = getPayment(paymentId);
   if (!entry) {
-    return res.status(200).json({ ok: true, status: 'unknown' });
+  return res.status(200).json({ ok: true, status: 'unknown' });
   }
 
   return res.status(200).json({
     ok: true,
     status: entry.status,
     userId: entry.userId,
-    planId: entry.planId,
+    planId: entry.planType,
   });
 }
