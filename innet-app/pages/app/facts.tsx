@@ -67,14 +67,16 @@ const [isFinePointer, setIsFinePointer] = useState(false);
     return 'В этой группе достигнут лимит фактов. Удалите один, чтобы добавить новый.';
   }, [factsPerGroupLimit]);
   const sanitizeFactText = useCallback(
-    (value: string) => {
+    (value: string, options?: { trimWhitespace?: boolean }) => {
+      const { trimWhitespace = true } = options ?? {};
       const trimmed = value.trim();
       if (!trimmed) return '';
+      const base = trimWhitespace ? trimmed : value;
       if (isUnlimited(entitlements.factLengthLimit)) {
-        return trimmed;
+        return base;
       }
       const limit = entitlements.factLengthLimit ?? FACT_TEXT_LIMIT;
-      return trimmed.slice(0, limit);
+      return base.slice(0, limit);
     },
     [entitlements.factLengthLimit]
   );
@@ -355,7 +357,7 @@ useEffect(() => {
       let innerChanged = false;
       const facts = group.facts.map((fact) => {
         if (fact.id !== factId) return fact;
-        const sanitized = sanitizeFactText(text);
+        const sanitized = sanitizeFactText(text, { trimWhitespace: false });
         if (fact.text === sanitized) return fact;
         innerChanged = true;
         return { ...fact, text: sanitized };

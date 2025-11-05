@@ -39,7 +39,7 @@ const MAX_WEEKS = 12;
 const MAX_MONTHS = 12;
 
 export const DEFAULT_REMINDER_SETTINGS: ReminderSettings = {
-  enabled: false,
+  enabled: true,
   cadence: {
     value: 2,
     unit: 'week',
