@@ -56,10 +56,6 @@ export default function AuthCallback() {
             if (user.id) {
               window.sessionStorage.setItem('innet_oauth_supabase_uid', user.id);
             }
-            const fullName = (user.user_metadata?.full_name as string | undefined)?.trim();
-            if (fullName) {
-              window.sessionStorage.setItem('innet_oauth_full_name', fullName);
-            }
           } catch (storageError) {
             console.warn('[auth/callback] Unable to persist OAuth prefill data', storageError);
           }
@@ -128,7 +124,7 @@ export default function AuthCallback() {
         target = normalizeNext(storedNext);
       }
       if (!target) {
-        if (typeParam === 'signup') {
+        if (typeParam === 'signup' || providerParam) {
           const provider = providerParam || 'google';
           target = `/register?oauth=${encodeURIComponent(provider)}`;
         } else {

@@ -1,4 +1,5 @@
 import { loadUsers, saveUsers, type UserAccount } from './storage';
+import { updateRemoteAccount } from './accountRemote';
 
 type RecoverResponse =
   | { ok: true; email: string | null }
@@ -99,6 +100,11 @@ export async function recoverSupabaseEmailAndUpdateLocal(
   });
 
   saveUsers([...deduplicated, updatedUser]);
+  void updateRemoteAccount(updatedUser).then((result) => {
+    if (!result.ok) {
+      console.warn('[emailRecovery] Failed to sync recovered email', result.message);
+    }
+  });
 
   try {
     const currentId = localStorage.getItem('innet_current_user_id');

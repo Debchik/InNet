@@ -10,6 +10,7 @@ import { useReminders } from '../../hooks/useReminders';
 import { formatRelative } from '../../utils/time';
 import { isEmail } from '../../utils/contact';
 import { recoverSupabaseEmailAndUpdateLocal } from '../../lib/userEmailRecovery';
+import { updateRemoteAccount } from '../../lib/accountRemote';
 
 type ProfileInfo = {
   id: string;
@@ -311,15 +312,30 @@ const persistAvatar = useCallback(
   (updatedProfile: ProfileInfo) => {
     try {
       const users = loadUsers();
-      const updatedUsers = users.map((user) =>
-          isSameUser(user, updatedProfile)
-            ? { ...user, avatar: updatedProfile.avatar, avatarType: updatedProfile.avatarType }
-            : user
-        );
-        saveUsers(updatedUsers);
-      } catch (error) {
-        console.warn('[profile] Failed to persist avatar', error);
+      let remoteCandidate: UserAccount | undefined;
+      const updatedUsers = users.map((user) => {
+        if (isSameUser(user, updatedProfile)) {
+          const next: UserAccount = {
+            ...user,
+            avatar: updatedProfile.avatar,
+            avatarType: updatedProfile.avatarType,
+          };
+          remoteCandidate = next;
+          return next;
+        }
+        return user;
+      });
+      saveUsers(updatedUsers);
+      if (remoteCandidate) {
+        void updateRemoteAccount(remoteCandidate).then((result) => {
+          if (!result.ok) {
+            console.warn('[profile] Failed to sync avatar with Supabase', result.message);
+          }
+        });
       }
+    } catch (error) {
+      console.warn('[profile] Failed to persist avatar', error);
+    }
 
       if (typeof window !== 'undefined') {
         if (updatedProfile.avatar && updatedProfile.avatarType) {
@@ -585,6 +601,14 @@ const persistAvatar = useCallback(
           : user
       );
       saveUsers(updatedUsers);
+      const remoteCandidate = updatedUsers.find((user) => isSameUser(user));
+      if (remoteCandidate) {
+        void updateRemoteAccount(remoteCandidate).then((result) => {
+          if (!result.ok) {
+            console.warn('[profile] Failed to sync contacts with Supabase', result.message);
+          }
+        });
+      }
 
       setProfile((prev) =>
         prev

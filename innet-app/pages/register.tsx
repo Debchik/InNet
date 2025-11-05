@@ -20,6 +20,7 @@ import { setCurrentPlan } from '../lib/subscription';
 import { isEmail, isPhone, normalizePhone } from '../utils/contact';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { recoverSupabaseEmailAndUpdateLocal } from '../lib/userEmailRecovery';
+import { registerRemoteAccount, updateRemoteAccount } from '../lib/accountRemote';
 
 type StepOneInputs = {
   contact: string;
@@ -65,9 +66,7 @@ export default function Register() {
   });
 
   const [credentials, setCredentials] = useState<Credentials | null>(null);
-  const [signupNotice, setSignupNotice] = useState<{ type: 'info' | 'error'; text: string } | null>(
-    null
-  );
+  const [, setSignupNotice] = useState<{ type: 'info' | 'error'; text: string } | null>(null);
   const [name, setName] = useState('');
   const [surname, setSurname] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -153,21 +152,18 @@ export default function Register() {
     if (oauthPrefillAppliedRef.current) return;
     if (typeof window === 'undefined') return;
     let rawEmail: string | null = null;
-    let rawFullName: string | null = null;
     let rawSupabaseUid: string | null = null;
     try {
       rawEmail = window.sessionStorage.getItem('innet_oauth_email');
-      rawFullName = window.sessionStorage.getItem('innet_oauth_full_name');
       rawSupabaseUid = window.sessionStorage.getItem('innet_oauth_supabase_uid');
     } catch {
       return;
     }
 
     const normalizedEmail = rawEmail?.trim().toLowerCase();
-    const trimmedFullName = rawFullName?.trim();
     const normalizedSupabaseUid = rawSupabaseUid?.trim() ?? null;
 
-    if (!normalizedEmail && !trimmedFullName && !normalizedSupabaseUid) {
+    if (!normalizedEmail && !normalizedSupabaseUid) {
       return;
     }
 
@@ -196,17 +192,7 @@ export default function Register() {
     if (step !== 2) {
       setStep(2);
     }
-
-    if (trimmedFullName) {
-      const parts = trimmedFullName.split(/\s+/);
-      if (parts.length > 0 && !name) {
-        setName(parts[0]);
-      }
-      if (parts.length > 1 && !surname) {
-        setSurname(parts.slice(1).join(' '));
-      }
-    }
-  }, [name, step, surname]);
+  }, [step]);
 
   useEffect(() => {
     // Clear temporary messages when selection count is valid again.
@@ -228,7 +214,6 @@ export default function Register() {
       const sessionUser = data.user;
       if (!sessionUser) return;
       const email = sessionUser.email?.trim().toLowerCase() ?? '';
-      const fullName = (sessionUser.user_metadata?.full_name as string | undefined) || '';
       setCredentials({
         email,
         password: '',
@@ -236,7 +221,6 @@ export default function Register() {
         confirmed: true,
         supabaseUid: sessionUser.id ?? null,
       });
-      if (fullName && !name) setName(fullName);
       setStep(2);
     };
     void primeFromSession();
@@ -247,7 +231,7 @@ export default function Register() {
     return () => {
       sub.subscription.unsubscribe();
     };
-  }, [name, supabase]);
+  }, [supabase]);
 
   const stopCameraStream = useCallback(() => {
     const stream = streamRef.current;
@@ -346,9 +330,11 @@ export default function Register() {
     clearErrors();
     setSignupNotice(null);
 
-    let requiresEmailConfirmation = false;
+    const requiresEmailConfirmation = false;
 
-    // Try creating a Supabase auth user; if env missing, gracefully continue in local mode
+    // Email confirmation is disabled for now; keep a stub in case Supabase signup returns later.
+    // The previous Supabase signUp integration is left here for reference.
+    /*
     if (contactIsEmail) {
       try {
         if (supabase) {
@@ -394,6 +380,7 @@ export default function Register() {
         });
       }
     }
+    */
 
     setCredentials({
       email: normalizedEmail,
@@ -801,6 +788,22 @@ export default function Register() {
       supabaseUid: supabaseUid ?? null,
     };
 
+    const remoteResult = await registerRemoteAccount(user, user.password);
+    if (!remoteResult.ok) {
+      setIsCompleting(false);
+      setStepTwoErrors([remoteResult.message]);
+      return;
+    }
+
+    const persistedUser: UserAccount = {
+      ...remoteResult.user,
+      password: user.password,
+      categories: remoteResult.user.categories ?? selectedCategories,
+      factsByCategory: remoteResult.user.factsByCategory ?? normalizedFacts,
+      plan: remoteResult.user.plan ?? DEFAULT_PLAN,
+      planActivatedAt: remoteResult.user.planActivatedAt ?? user.planActivatedAt ?? Date.now(),
+    };
+
     const users = loadUsers();
     const normalizedLogin = loginIdentifier.trim().toLowerCase();
     const withoutDuplicate = users.filter((entry) => {
@@ -822,24 +825,25 @@ export default function Register() {
       }
       return true;
     });
-    saveUsers([...withoutDuplicate, user]);
+    saveUsers([...withoutDuplicate, persistedUser]);
+    let currentUser = persistedUser;
 
     if (typeof window !== 'undefined') {
       localStorage.setItem('innet_logged_in', 'true');
-      localStorage.setItem('innet_current_user_id', user.id);
+      localStorage.setItem('innet_current_user_id', currentUser.id);
       const preferredContact = effectiveEmail || effectivePhone || '';
       if (preferredContact) {
         localStorage.setItem('innet_current_user_email', preferredContact);
       } else {
         localStorage.removeItem('innet_current_user_email');
       }
-      localStorage.setItem('innet_current_user_name', user.name);
-      localStorage.setItem('innet_current_user_categories', JSON.stringify(user.categories));
-      localStorage.setItem('innet_current_user_facts', JSON.stringify(user.factsByCategory));
+      localStorage.setItem('innet_current_user_name', currentUser.name);
+      localStorage.setItem('innet_current_user_categories', JSON.stringify(currentUser.categories));
+      localStorage.setItem('innet_current_user_facts', JSON.stringify(currentUser.factsByCategory));
       localStorage.setItem('innet_current_user_verified', emailVerified ? 'true' : 'false');
       localStorage.setItem('innet_qr_select_all_groups', 'true');
-      if (user.supabaseUid) {
-        localStorage.setItem('innet_current_user_supabase_uid', user.supabaseUid);
+      if (currentUser.supabaseUid) {
+        localStorage.setItem('innet_current_user_supabase_uid', currentUser.supabaseUid);
       } else {
         localStorage.removeItem('innet_current_user_supabase_uid');
       }
@@ -847,28 +851,28 @@ export default function Register() {
 
       setCurrentPlan(DEFAULT_PLAN);
 
-      if (user.surname) {
-        localStorage.setItem('innet_current_user_surname', user.surname);
+      if (currentUser.surname) {
+        localStorage.setItem('innet_current_user_surname', currentUser.surname);
       } else {
         localStorage.removeItem('innet_current_user_surname');
       }
 
-      if (user.phone) {
-        localStorage.setItem('innet_current_user_phone', user.phone);
+      if (currentUser.phone) {
+        localStorage.setItem('innet_current_user_phone', currentUser.phone);
       } else {
         localStorage.removeItem('innet_current_user_phone');
       }
       localStorage.removeItem('innet_current_user_telegram');
       localStorage.removeItem('innet_current_user_instagram');
 
-      if (user.avatar) {
-        localStorage.setItem('innet_current_user_avatar', user.avatar);
+      if (currentUser.avatar) {
+        localStorage.setItem('innet_current_user_avatar', currentUser.avatar);
       } else {
         localStorage.removeItem('innet_current_user_avatar');
       }
 
-      if (user.avatarType) {
-        localStorage.setItem('innet_current_user_avatar_type', user.avatarType);
+      if (currentUser.avatarType) {
+        localStorage.setItem('innet_current_user_avatar_type', currentUser.avatarType);
       } else {
         localStorage.removeItem('innet_current_user_avatar_type');
       }
@@ -884,15 +888,14 @@ export default function Register() {
     if (effectiveEmail) {
       void syncProfileToSupabase({
         email: effectiveEmail,
-        name: user.name,
-        surname: user.surname,
-        phone: user.phone,
+        name: currentUser.name,
+        surname: currentUser.surname,
+        phone: currentUser.phone,
       });
     } else if (supabaseUid) {
-      void recoverSupabaseEmailAndUpdateLocal(supabaseUid, user).then((result) => {
+      void recoverSupabaseEmailAndUpdateLocal(supabaseUid, currentUser).then((result) => {
         if (result?.email) {
-          user.email = result.user.email;
-          user.supabaseUid = result.user.supabaseUid ?? null;
+          currentUser = result.user;
           setCredentials((prev) =>
             prev
               ? { ...prev, email: result.email, supabaseUid: result.user.supabaseUid ?? null }
@@ -903,6 +906,14 @@ export default function Register() {
             name: result.user.name,
             surname: result.user.surname,
             phone: result.user.phone,
+          });
+          void updateRemoteAccount(currentUser).then((syncResult) => {
+            if (!syncResult.ok) {
+              console.warn(
+                '[register] Failed to sync account after recovering Supabase email',
+                syncResult.message
+              );
+            }
           });
           if (typeof window !== 'undefined') {
             try {
@@ -919,7 +930,6 @@ export default function Register() {
     if (typeof window !== 'undefined') {
       try {
         window.sessionStorage.removeItem('innet_oauth_email');
-        window.sessionStorage.removeItem('innet_oauth_full_name');
         window.sessionStorage.removeItem('innet_oauth_supabase_uid');
       } catch {/* ignore storage cleanup errors */}
     }
@@ -1011,31 +1021,6 @@ export default function Register() {
 
           {step === 2 && (
             <div className="space-y-6">
-              {signupNotice && (
-                <div
-                  className={`rounded-md border px-4 py-3 text-sm ${
-                    signupNotice.type === 'info'
-                      ? 'border-amber-400/40 bg-amber-500/10 text-amber-100'
-                      : 'border-red-500/40 bg-red-500/10 text-red-200'
-                  }`}
-                >
-                  {signupNotice.text}
-                </div>
-              )}
-              {supabase ? (
-                <div className="rounded-md border border-gray-700 bg-gray-900/40 px-4 py-3 space-y-2">
-                  <div className="text-sm text-gray-200">
-                    Нужен другой Google-аккаунт или хотите попробовать ещё раз?
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleGoogleSignup}
-                    className="w-full md:w-auto bg-transparent border border-gray-600 px-4 py-2 rounded-md text-sm text-gray-100 hover:border-primary transition-colors"
-                  >
-                    Повторить вход через Google
-                  </button>
-                </div>
-              ) : null}
               <div className="space-y-6">
                 <div className="space-y-3">
                   <p className="text-sm">Аватар (опционально)</p>

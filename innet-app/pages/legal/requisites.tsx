@@ -17,7 +17,7 @@ export default function LegalRequisitesPage() {
         <title>Контакты и реквизиты InNet</title>
         <meta
           name="description"
-          content="Контактные данные и реквизиты исполнителя цифрового сервиса InNet для оплаты через ЮKassa."
+          content="Контактные данные и реквизиты исполнителя цифрового сервиса InNet."
         />
       </Head>
       <section className="px-4 py-16 bg-background">
@@ -26,8 +26,7 @@ export default function LegalRequisitesPage() {
             <p className="text-xs uppercase tracking-[0.2em] text-primary">Контакты и реквизиты</p>
             <h1 className="text-3xl font-bold">Как связаться с InNet</h1>
             <p className="text-sm text-gray-300">
-              Ниже размещены официальные данные для договоров, оплаты и обратной связи. Укажите ссылку на эту страницу в
-              кабинете ЮKassa, чтобы заявка прошла модерацию.
+              Ниже размещены официальные данные для договоров, оплаты и обратной связи.
             </p>
           </header>
 

@@ -50,6 +50,35 @@ After these steps:
 
 ## Tables
 
+### `user_accounts`
+
+Persists authenticated users, their profile metadata and subscription state so the
+browser can be wiped without losing access.
+
+```sql
+create table if not exists public.user_accounts (
+  id uuid primary key,
+  email text not null unique,
+  phone text unique,
+  password_hash text not null,
+  plan text not null default 'free',
+  plan_activated_at timestamptz,
+  supabase_uid text,
+  data jsonb not null,
+  last_login_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+```
+
+Recommended indexes and policies:
+
+- `create index if not exists user_accounts_phone_idx on public.user_accounts (phone) where phone is not null;`
+- If you use Supabase RLS, allow the service role to select/insert/update rows
+  (`auth.role() = 'service_role'`). No other roles should have direct access.
+
+The `data` column stores the serialized `UserAccount` object without the password.
+
 ### `fact_collections`
 
 Stores the latest snapshot of a user's fact groups plus a toggle indicating
@@ -101,6 +130,9 @@ Row-level security policies should at minimum allow the service role to
 
 ## API endpoints
 
+- `POST /api/account/register` – persist a new local password account in Supabase.
+- `POST /api/account/login` – validate credentials (email or phone) against Supabase.
+- `PUT /api/account/update` – sync profile/contact/subscription updates to Supabase.
 - `GET /api/facts?profileId=...` – fetch fact groups + sync flag for a profile.
 - `PUT /api/facts` – upsert fact groups and toggle sync (service role only).
 - `GET /api/exchange?profileId=...` – pull pending exchanges for the QR owner.

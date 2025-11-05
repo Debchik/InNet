@@ -15,6 +15,7 @@ import { DEFAULT_PLAN } from '../lib/plans';
 import { setCurrentPlan } from '../lib/subscription';
 import { normalizePhone } from '../utils/contact';
 import { recoverSupabaseEmailAndUpdateLocal } from '../lib/userEmailRecovery';
+import { loginRemoteAccount } from '../lib/accountRemote';
 
 /**
  * Login page. This simplistic implementation stores a flag in localStorage
@@ -135,108 +136,154 @@ export default function Login() {
     return () => { sub.subscription.unsubscribe(); };
   }, [router, supabase]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
     // Basic validation
     const trimmedIdentifier = identifier.trim();
     if (!trimmedIdentifier || !password) {
       setError('Введите email или телефон и пароль');
       return;
     }
+
     const users = loadUsers();
-    const normalizedLogin = trimmedIdentifier.toLowerCase();
-    const normalizedPhone = normalizePhone(trimmedIdentifier);
-    const user = users.find((entry) => {
-      const entryLogin = entry.email.trim().toLowerCase();
-      if (entryLogin === normalizedLogin) {
-        return true;
-      }
-      if (normalizedPhone) {
-        const entryPhone = entry.phone ? normalizePhone(entry.phone) : '';
-        if (entryPhone && entryPhone === normalizedPhone) {
+    let resolvedUser: UserAccount | undefined;
+    let updatedUsers = users;
+
+    const remoteLogin = await loginRemoteAccount(trimmedIdentifier, password);
+
+    if (remoteLogin.ok) {
+      const remoteUser = remoteLogin.user;
+      resolvedUser = {
+        ...remoteUser,
+        password,
+        factsByCategory: remoteUser.factsByCategory ?? {},
+        categories: remoteUser.categories ?? [],
+        plan: remoteUser.plan ?? DEFAULT_PLAN,
+        planActivatedAt: remoteUser.planActivatedAt ?? Date.now(),
+      };
+
+      const normalizedEmail = resolvedUser.email.trim().toLowerCase();
+      const normalizedPhoneStored = resolvedUser.phone ? normalizePhone(resolvedUser.phone) : '';
+
+      updatedUsers = [
+        resolvedUser,
+        ...users.filter((entry) => {
+          if (entry.id === resolvedUser?.id) return false;
+          if (entry.email.trim().toLowerCase() === normalizedEmail) return false;
+          if (normalizedPhoneStored) {
+            const entryPhone = entry.phone ? normalizePhone(entry.phone) : '';
+            if (entryPhone === normalizedPhoneStored) {
+              return false;
+            }
+          }
+          return true;
+        }),
+      ];
+      saveUsers(updatedUsers);
+    } else {
+      const normalizedLogin = trimmedIdentifier.toLowerCase();
+      const normalizedPhone = normalizePhone(trimmedIdentifier);
+      const fallbackUser = users.find((entry) => {
+        const entryLogin = entry.email.trim().toLowerCase();
+        if (entryLogin === normalizedLogin) {
           return true;
         }
-        const emailAsPhone = normalizePhone(entry.email);
-        if (emailAsPhone && emailAsPhone === normalizedPhone) {
-          return true;
+        if (normalizedPhone) {
+          const entryPhone = entry.phone ? normalizePhone(entry.phone) : '';
+          if (entryPhone && entryPhone === normalizedPhone) {
+            return true;
+          }
+          const emailAsPhone = normalizePhone(entry.email);
+          if (emailAsPhone && emailAsPhone === normalizedPhone) {
+            return true;
+          }
         }
+        return false;
+      });
+
+      if (!fallbackUser) {
+        setError(remoteLogin.message ?? 'Аккаунт с такими данными не найден. Зарегистрируйтесь.');
+        return;
       }
-      return false;
-    });
 
-    if (!user) {
-      setError('Аккаунт с таким email или телефоном не найден. Зарегистрируйтесь.');
-      return;
+      if (fallbackUser.password !== password) {
+        setError('Неверный пароль. Попробуйте ещё раз.');
+        return;
+      }
+
+      resolvedUser = fallbackUser;
     }
 
-    if (user.password !== password) {
-      setError('Неверный пароль. Попробуйте ещё раз.');
+    if (!resolvedUser) {
+      setError('Не удалось войти. Попробуйте ещё раз.');
       return;
     }
-
-    /* if (!user.verified) {
-      setError('Подтвердите почту по ссылке из письма, чтобы войти.');
-      return;
-    } */
 
     if (typeof window !== 'undefined') {
       localStorage.setItem('innet_logged_in', 'true');
-      localStorage.setItem('innet_current_user_id', user.id);
-      if (user.email) {
-        localStorage.setItem('innet_current_user_email', user.email);
+      localStorage.setItem('innet_current_user_id', resolvedUser.id);
+      if (resolvedUser.email) {
+        localStorage.setItem('innet_current_user_email', resolvedUser.email);
       } else {
         localStorage.removeItem('innet_current_user_email');
       }
-      if (user.supabaseUid) {
-        localStorage.setItem('innet_current_user_supabase_uid', user.supabaseUid);
+      if (resolvedUser.supabaseUid) {
+        localStorage.setItem('innet_current_user_supabase_uid', resolvedUser.supabaseUid);
       } else {
         localStorage.removeItem('innet_current_user_supabase_uid');
       }
-      localStorage.setItem('innet_current_user_name', user.name);
-      localStorage.setItem('innet_current_user_categories', JSON.stringify(user.categories));
-      localStorage.setItem('innet_current_user_facts', JSON.stringify(user.factsByCategory));
+      localStorage.setItem('innet_current_user_name', resolvedUser.name);
+      localStorage.setItem(
+        'innet_current_user_categories',
+        JSON.stringify(resolvedUser.categories ?? [])
+      );
+      localStorage.setItem(
+        'innet_current_user_facts',
+        JSON.stringify(resolvedUser.factsByCategory ?? {})
+      );
       localStorage.setItem('innet_qr_select_all_groups', 'true');
-      localStorage.setItem('innet_current_user_verified', user.verified ? 'true' : 'false');
-      saveFactGroups(convertFactsToGroups(user.factsByCategory));
+      localStorage.setItem('innet_current_user_verified', resolvedUser.verified ? 'true' : 'false');
+      saveFactGroups(convertFactsToGroups(resolvedUser.factsByCategory ?? {}));
 
-      if (user.surname) {
-        localStorage.setItem('innet_current_user_surname', user.surname);
+      if (resolvedUser.surname) {
+        localStorage.setItem('innet_current_user_surname', resolvedUser.surname);
       } else {
         localStorage.removeItem('innet_current_user_surname');
       }
 
-      if (user.phone) {
-        localStorage.setItem('innet_current_user_phone', user.phone);
+      if (resolvedUser.phone) {
+        localStorage.setItem('innet_current_user_phone', resolvedUser.phone);
       } else {
         localStorage.removeItem('innet_current_user_phone');
       }
 
-      if (user.telegram) {
-        localStorage.setItem('innet_current_user_telegram', user.telegram);
+      if (resolvedUser.telegram) {
+        localStorage.setItem('innet_current_user_telegram', resolvedUser.telegram);
       } else {
         localStorage.removeItem('innet_current_user_telegram');
       }
 
-      if (user.instagram) {
-        localStorage.setItem('innet_current_user_instagram', user.instagram);
+      if (resolvedUser.instagram) {
+        localStorage.setItem('innet_current_user_instagram', resolvedUser.instagram);
       } else {
         localStorage.removeItem('innet_current_user_instagram');
       }
 
-      if (user.avatar) {
-        localStorage.setItem('innet_current_user_avatar', user.avatar);
+      if (resolvedUser.avatar) {
+        localStorage.setItem('innet_current_user_avatar', resolvedUser.avatar);
       } else {
         localStorage.removeItem('innet_current_user_avatar');
       }
 
-      if (user.avatarType) {
-        localStorage.setItem('innet_current_user_avatar_type', user.avatarType);
+      if (resolvedUser.avatarType) {
+        localStorage.setItem('innet_current_user_avatar_type', resolvedUser.avatarType);
       } else {
         localStorage.removeItem('innet_current_user_avatar_type');
       }
 
       window.dispatchEvent(new Event('innet-auth-refresh'));
-      setCurrentPlan(user.plan ?? DEFAULT_PLAN);
+      setCurrentPlan(resolvedUser.plan ?? DEFAULT_PLAN);
     }
 
     router.push('/app/qr');

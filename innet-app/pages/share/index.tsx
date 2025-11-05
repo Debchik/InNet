@@ -21,7 +21,8 @@ import {
 import { syncProfileToSupabase } from '../../lib/profileSync';
 import { v4 as uuidv4 } from 'uuid';
 import { usePlan } from '../../hooks/usePlan';
-import { isUnlimited } from '../../lib/plans';
+import { DEFAULT_PLAN, isUnlimited } from '../../lib/plans';
+import { registerRemoteAccount } from '../../lib/accountRemote';
 
 type PageStatus = 'loading' | 'ready' | 'adding' | 'added' | 'error';
 
@@ -224,7 +225,7 @@ export default function ShareLandingPage() {
           return;
         }
 
-        const newUser: UserAccount = {
+        const baseUser: UserAccount = {
           id: uuidv4(),
           email: trimmedEmail,
           password: uuidv4().replace(/-/g, '').slice(0, 12),
@@ -240,21 +241,37 @@ export default function ShareLandingPage() {
           createdAt: Date.now(),
           verified: true,
           quickSignup: true,
+          plan: DEFAULT_PLAN,
+          planActivatedAt: Date.now(),
           supabaseUid: null,
         };
 
-        saveUsers([newUser, ...users]);
-        establishSession(newUser);
+        const remoteResult = await registerRemoteAccount(baseUser, baseUser.password);
+        if (!remoteResult.ok) {
+          throw new Error(remoteResult.message ?? 'Не удалось зарегистрировать аккаунт.');
+        }
+
+        const persistedUser: UserAccount = {
+          ...remoteResult.user,
+          password: baseUser.password,
+          factsByCategory: remoteResult.user.factsByCategory ?? {},
+          categories: remoteResult.user.categories ?? [],
+          plan: remoteResult.user.plan ?? DEFAULT_PLAN,
+          planActivatedAt: remoteResult.user.planActivatedAt ?? baseUser.planActivatedAt ?? Date.now(),
+        };
+
+        saveUsers([persistedUser, ...users]);
+        establishSession(persistedUser);
         setHasAccount(true);
 
         await syncProfileToSupabase({
-          email: newUser.email,
-          name: newUser.name,
+          email: persistedUser.email,
+          name: persistedUser.name,
         });
 
         await mergeAndNavigate('quick-signup', {
-          email: newUser.email,
-          name: newUser.name,
+          email: persistedUser.email,
+          name: persistedUser.name,
         });
       } catch (err) {
         console.error('[share] Quick signup failed', err);

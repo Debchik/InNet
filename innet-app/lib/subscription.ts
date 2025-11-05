@@ -1,5 +1,6 @@
 import { DEFAULT_PLAN, getPlanEntitlements, PlanEntitlements, PlanId } from './plans';
-import { loadUsers, saveUsers } from './storage';
+import { loadUsers, saveUsers, type UserAccount } from './storage';
+import { updateRemoteAccount } from './accountRemote';
 
 const PLAN_STORAGE_KEY = 'innet_current_plan';
 
@@ -49,10 +50,28 @@ export function setCurrentPlan(plan: PlanId): void {
   if (storedUserId) {
     try {
       const users = loadUsers();
-      const updated = users.map((user) =>
-        user.id === storedUserId ? { ...user, plan } : user
-      );
+      let remoteCandidate: UserAccount | undefined;
+      const updated = users.map((user) => {
+        if (user.id !== storedUserId) {
+          return user;
+        }
+        const planChanged = user.plan !== plan;
+        const next: UserAccount = {
+          ...user,
+          plan,
+          planActivatedAt: planChanged ? Date.now() : user.planActivatedAt ?? Date.now(),
+        };
+        remoteCandidate = next;
+        return next;
+      });
       saveUsers(updated);
+      if (remoteCandidate) {
+        void updateRemoteAccount(remoteCandidate).then((result) => {
+          if (!result.ok) {
+            console.warn('[subscription] Failed to sync plan with Supabase', result.message);
+          }
+        });
+      }
     } catch {
       /* ignore */
     }

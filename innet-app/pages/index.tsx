@@ -154,17 +154,7 @@ export default function Home() {
               Создать аккаунт
             </Link>
           </div>
-          <div className="p-6 bg-gray-800 rounded-xl shadow text-center">
-            {/* Placeholder illustration of the scanning UI */}
-            <p className="text-sm text-gray-400 mb-4">Предпросмотр: экран сканирования</p>
-            <div className="flex justify-center">
-              {/* Заменён плейсхолдер на реальную картинку лендинга.
-                  Предположение: изображение положено в public/landing.png
-                  Если файл имеет другое имя/путь, скажите — заменю. */}
-              <Image src="/landing.png" alt="Preview: экран сканирования" width={224} height={224} className="object-cover rounded-lg border-4 border-primary" />
-            </div>
-            <p className="text-xs text-gray-500 mt-4">Здесь появятся группы фактов и кнопка «Добавить в сеть»</p>
-          </div>
+          {/* ...блок предпросмотра сканирования и картинка удалены по запросу... */}
         </div>
       </section>
 

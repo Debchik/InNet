@@ -9,18 +9,35 @@ const app = next({ dev });
 const handle = app.getRequestHandler();
 
 const certDir = process.cwd();
+const certBase = process.env.DEV_CERT_BASE || 'localhost+2';
+const keyPath = path.join(certDir, `${certBase}-key.pem`);
+const certPath = path.join(certDir, `${certBase}.pem`);
+
+if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
+  throw new Error(
+    `Developer TLS certificates not found. Expected ${keyPath} and ${certPath}. ` +
+      'Set DEV_CERT_BASE to the base filename (without extension) of your certificate pair.'
+  );
+}
+
 const httpsOptions = {
-  key: fs.readFileSync(path.join(certDir, '192.168.7.28+3-key.pem')),
-  cert: fs.readFileSync(path.join(certDir, '192.168.7.28+3.pem')),
+  key: fs.readFileSync(keyPath),
+  cert: fs.readFileSync(certPath),
 };
+
+const listenHost = process.env.DEV_HOST || 'localhost';
+const listenPort = Number(process.env.DEV_PORT || 3000);
+const publicHost =
+  process.env.DEV_PUBLIC_HOST ||
+  (listenHost === '0.0.0.0' ? 'localhost' : listenHost);
 
 app.prepare().then(() => {
   https
     .createServer(httpsOptions, (req, res) => {
       handle(req, res);
     })
-    .listen(3000, '0.0.0.0', (err) => {
+    .listen(listenPort, listenHost, (err) => {
       if (err) throw err;
-      console.log('HTTPS server running at https://192.168.7.28:3000');
+      console.log(`HTTPS server running at https://${publicHost}:${listenPort}`);
     });
 });
