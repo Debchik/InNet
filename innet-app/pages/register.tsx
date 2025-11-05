@@ -722,7 +722,8 @@ export default function Register() {
       );
     }
 
-    const loginIdentifier = effectiveEmail || effectivePhone || supabaseUid || generatedLoginIdentifier;
+    const loginIdentifier =
+      effectiveEmail || effectivePhone || supabaseUid || generatedLoginIdentifier;
     if (!loginIdentifier) {
       setStepTwoErrors([
         'Укажите email, телефон или войдите через Google, чтобы завершить регистрацию.',
@@ -730,10 +731,21 @@ export default function Register() {
       return;
     }
 
+    const isOauthFlow = Boolean(supabaseUid || router.query.oauth);
+    let passwordForAccount = baseCredentials.password ?? '';
+    if (!passwordForAccount || passwordForAccount.length < 6) {
+      if (isOauthFlow) {
+        passwordForAccount = uuidv4().replace(/-/g, '') + uuidv4().replace(/-/g, '');
+      } else {
+        setStepTwoErrors(['Пароль должен состоять как минимум из 6 символов.']);
+        return;
+      }
+    }
+
     const effectiveCredentials: Credentials = {
       email: effectiveEmail || generatedLoginIdentifier || supabaseUid || '',
       phone: effectivePhone,
-      password: baseCredentials.password,
+      password: passwordForAccount,
       confirmed: baseCredentials.confirmed,
       supabaseUid,
     };
