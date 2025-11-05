@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createPayment } from '../../../lib/payments/yookassa';
-import { rememberPayment, PlanProduct } from '../../../lib/payments/store';
+import { rememberPayment } from '../../../lib/payments/store';
+import { normalizePlanProduct, type PlanProduct } from '../../../lib/plans';
 
 type CreatePaymentBody = {
   returnUrl?: string;
@@ -47,9 +48,9 @@ export default async function handler(
     return res.status(400).json({ ok: false, message: 'Не указан идентификатор пользователя' });
   }
 
-  const requestedPlan = (body.planId as PlanProduct | undefined) ?? 'pro-monthly';
-  const plan = PLAN_CATALOG[requestedPlan] ?? PLAN_CATALOG['pro-monthly'];
-  const planId: PlanProduct = PLAN_CATALOG[requestedPlan] ? requestedPlan : 'pro-monthly';
+  const normalizedRequestedPlan = normalizePlanProduct(body.planId as string | undefined) ?? 'pro-monthly';
+  const plan = PLAN_CATALOG[normalizedRequestedPlan] ?? PLAN_CATALOG['pro-monthly'];
+  const planId: PlanProduct = PLAN_CATALOG[normalizedRequestedPlan] ? normalizedRequestedPlan : 'pro-monthly';
 
   const returnUrl =
     body.returnUrl?.trim() ||

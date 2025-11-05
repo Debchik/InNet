@@ -139,6 +139,9 @@ export default function Layout({ children }: LayoutProps) {
             <Link href="/app/contacts" className="hover:text-primary">
               Контакты
             </Link>
+            <Link href="/app/upgrade" className="hover:text-primary">
+              Подписка
+            </Link>
             <Link href="/app/profile" className="hover:text-primary">
               Мой профиль
             </Link>
@@ -208,6 +211,9 @@ export default function Layout({ children }: LayoutProps) {
               </Link>
               <Link href="/app/contacts" className="py-3 px-2 rounded hover:bg-primary/20 text-lg font-medium" onClick={() => setMobileMenuOpen(false)}>
                 Контакты
+              </Link>
+              <Link href="/app/upgrade" className="py-3 px-2 rounded hover:bg-primary/20 text-lg font-medium" onClick={() => setMobileMenuOpen(false)}>
+                Подписка
               </Link>
               <Link href="/app/profile" className="py-3 px-2 rounded hover:bg-primary/20 text-lg font-medium" onClick={() => setMobileMenuOpen(false)}>
                 Мой профиль

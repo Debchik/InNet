@@ -77,7 +77,10 @@ Recommended indexes and policies:
 - If you use Supabase RLS, allow the service role to select/insert/update rows
   (`auth.role() = 'service_role'`). No other roles should have direct access.
 
-The `data` column stores the serialized `UserAccount` object without the password.
+The `data` column stores the serialized `UserAccount` object without the password. It now also carries
+the optional subscription metadata (`planProduct`, `planExpiresAt`). We do not maintain separate
+columns for these fields; `plan_expires_at` is only present inside the JSON payload and is `null`
+unless the payment metadata explicitly specifies a trial period.
 
 ### `fact_collections`
 

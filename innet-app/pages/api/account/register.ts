@@ -68,6 +68,8 @@ export default async function handler(
   const supabaseUid = user.supabaseUid?.trim() || null;
   const plan = user.plan ?? DEFAULT_PLAN;
   const planActivatedAt = user.planActivatedAt ?? Date.now();
+  const planProduct = user.planProduct ?? null;
+  const planExpiresAt = user.planExpiresAt ?? null;
 
   try {
     const { data: existing, error: selectError } = await client
@@ -118,6 +120,8 @@ export default async function handler(
       plan,
       planActivatedAt,
       supabaseUid,
+      planProduct,
+      planExpiresAt,
     });
 
     const now = new Date().toISOString();

@@ -1,4 +1,10 @@
-import { DEFAULT_PLAN, getPlanEntitlements, PlanEntitlements, PlanId } from './plans';
+import {
+  DEFAULT_PLAN,
+  getPlanEntitlements,
+  PlanEntitlements,
+  PlanId,
+  type PlanProduct,
+} from './plans';
 import { loadUsers, saveUsers, type UserAccount } from './storage';
 import { updateRemoteAccount } from './accountRemote';
 
@@ -42,7 +48,13 @@ export function getCurrentPlan(): PlanId {
   return DEFAULT_PLAN;
 }
 
-export function setCurrentPlan(plan: PlanId): void {
+type PlanUpdateOptions = {
+  planActivatedAt?: number;
+  planProduct?: PlanProduct | null;
+  planExpiresAt?: number | null;
+};
+
+export function setCurrentPlan(plan: PlanId, options?: PlanUpdateOptions): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(PLAN_STORAGE_KEY, plan);
 
@@ -51,15 +63,22 @@ export function setCurrentPlan(plan: PlanId): void {
     try {
       const users = loadUsers();
       let remoteCandidate: UserAccount | undefined;
+      const now = Date.now();
       const updated = users.map((user) => {
         if (user.id !== storedUserId) {
           return user;
         }
-        const planChanged = user.plan !== plan;
+        const planChanged =
+          user.plan !== plan ||
+          (options?.planProduct !== undefined && (user.planProduct ?? null) !== (options.planProduct ?? null)) ||
+          (options?.planExpiresAt !== undefined && (user.planExpiresAt ?? null) !== (options.planExpiresAt ?? null));
+        const activatedAt = options?.planActivatedAt ?? (planChanged ? now : user.planActivatedAt ?? now);
         const next: UserAccount = {
           ...user,
           plan,
-          planActivatedAt: planChanged ? Date.now() : user.planActivatedAt ?? Date.now(),
+          planActivatedAt: activatedAt,
+          ...(options?.planProduct !== undefined ? { planProduct: options.planProduct ?? null } : {}),
+          ...(options?.planExpiresAt !== undefined ? { planExpiresAt: options.planExpiresAt ?? null } : {}),
         };
         remoteCandidate = next;
         return next;

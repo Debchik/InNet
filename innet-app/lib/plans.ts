@@ -1,5 +1,7 @@
 export type PlanId = 'free' | 'pro';
 
+export type PlanProduct = 'pro-monthly' | 'pro-annual';
+
 export type PlanEntitlements = {
   contactLimit: number | null;
   factGroupLimit: number | null;
@@ -59,6 +61,14 @@ export const PLAN_CATALOG: Record<PlanId, PlanMeta> = {
     description: 'Подписка с полным функционалом',
   },
 };
+
+export function normalizePlanProduct(value: string | null | undefined): PlanProduct | null {
+  if (!value) return null;
+  if (value === 'pro-monthly' || value === 'pro-annual') {
+    return value;
+  }
+  return null;
+}
 
 export function getPlanEntitlements(plan: PlanId): PlanEntitlements {
   return PLAN_ENTITLEMENTS[plan] ?? PLAN_ENTITLEMENTS.free;

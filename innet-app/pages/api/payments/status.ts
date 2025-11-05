@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getPayment, PlanProduct } from '../../../lib/payments/store';
+import { getPayment } from '../../../lib/payments/store';
+import type { PlanProduct } from '../../../lib/plans';
 
 type SuccessResponse = {
   ok: true;
@@ -29,7 +30,7 @@ export default function handler(
 
   const entry = getPayment(paymentId);
   if (!entry) {
-  return res.status(200).json({ ok: true, status: 'unknown' });
+    return res.status(200).json({ ok: true, status: 'unknown' });
   }
 
   return res.status(200).json({

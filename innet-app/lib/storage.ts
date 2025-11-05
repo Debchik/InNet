@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { FACT_CATEGORY_CONFIG, FACT_CATEGORY_LABELS, FACT_CATEGORY_COLORS } from './categories';
-import type { PlanId } from './plans';
+import type { PlanId, PlanProduct } from './plans';
 
 /**
  * Types describing the core domain entities for InNet.
@@ -119,6 +119,8 @@ export interface UserAccount {
   quickSignup?: boolean;
   plan?: PlanId;
   planActivatedAt?: number;
+  planProduct?: PlanProduct | null;
+  planExpiresAt?: number | null;
   supabaseUid?: string | null;
 }
 

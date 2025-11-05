@@ -1,6 +1,6 @@
-type PaymentStatus = 'pending' | 'succeeded' | 'canceled';
+import type { PlanProduct } from '../plans';
 
-export type PlanProduct = 'pro-monthly' | 'pro-annual';
+type PaymentStatus = 'pending' | 'succeeded' | 'canceled';
 
 type StoredPayment = {
   paymentId: string;
