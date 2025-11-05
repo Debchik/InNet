@@ -1,6 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
 import Layout from '../components/Layout';
 import QRCodeToggler from '../components/QRCodeToggler';
 import { ctaSlogans } from '../utils/slogans';
