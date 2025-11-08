@@ -117,11 +117,13 @@ export default function Layout({ children }: LayoutProps) {
     }
   }; */
 
+  const brandHref = hydrated && isAuthenticated ? '/app/qr' : '/';
+
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
       <header className="relative flex items-center gap-4 border-b border-gray-700 px-4 py-3">
-        <Link href="/" className="text-2xl font-bold text-primary">
+        <Link href={brandHref} className="text-2xl font-bold text-primary">
           InNet
         </Link>
         {/* Центрированное меню на десктопе */}

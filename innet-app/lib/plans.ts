@@ -26,7 +26,7 @@ const unlimited = null;
 
 export const PLAN_ENTITLEMENTS: Record<PlanId, PlanEntitlements> = {
   free: {
-    contactLimit: 50,
+    contactLimit: 40,
     factGroupLimit: 3,
     factsPerGroupLimit: 5,
     factLengthLimit: 128,
