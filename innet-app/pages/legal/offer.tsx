@@ -1,4 +1,3 @@
-import Head from 'next/head';
 import Layout from '../../components/Layout';
 import {
   companyDescription,
@@ -7,17 +6,26 @@ import {
   publicOfferMeta,
   tariffPlans,
 } from '../../data/legal';
+import { seoConfig } from '../../lib/seo';
 
 export default function PublicOfferPage() {
   return (
-    <Layout>
-      <Head>
-        <title>{publicOfferMeta.documentTitle}</title>
-        <meta
-          name="description"
-          content="Публичная оферта сервиса InNet: условия предоставления цифровых услуг, порядок оплаты и возвратов."
-        />
-      </Head>
+    <Layout
+      seo={{
+        title: publicOfferMeta.documentTitle,
+        description:
+          'Публичная оферта сервиса InNet: условия предоставления цифровых услуг, порядок оплаты и возвратов.',
+        keywords: ['публичная оферта InNet', 'условия использования InNet', 'цифровые услуги InNet'],
+        structuredData: {
+          '@context': 'https://schema.org',
+          '@type': 'WebPage',
+          name: publicOfferMeta.documentTitle,
+          url: `${seoConfig.siteUrl}/legal/offer`,
+          description:
+            'Официальные условия предоставления доступа к цифровому сервису InNet, порядок оплаты и возвратов.',
+        },
+      }}
+    >
       <section className="px-4 py-16 bg-background">
         <div className="max-w-4xl mx-auto space-y-10 text-gray-100">
           <header className="space-y-3">

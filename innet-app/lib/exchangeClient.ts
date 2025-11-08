@@ -48,8 +48,16 @@ export async function fetchPendingExchanges(profileId: string): Promise<Exchange
 
   try {
     const response = await fetch(`/api/exchange?profileId=${encodeURIComponent(profileId)}`);
-    const data = (await response.json()) as ExchangeResponse;
-    if (!response.ok || !data.ok) {
+    const data = (await response.json().catch(() => ({}))) as ExchangeResponse;
+    if (!response.ok || !data || !('ok' in data)) {
+      return {
+        ok: false,
+        message:
+          (data && 'message' in data && data.message) ||
+          'Не удалось получить обмены с сервера.',
+      };
+    }
+    if (!data.ok) {
       return {
         ok: false,
         message:
@@ -59,7 +67,17 @@ export async function fetchPendingExchanges(profileId: string): Promise<Exchange
     }
     return data;
   } catch (error) {
-    console.error('[exchangeClient] fetchPendingExchanges failed', error);
-    return { ok: false, message: 'Ошибка сети при запросе обменов.' };
+    const isAbortError =
+      (typeof DOMException !== 'undefined' && error instanceof DOMException && error.name === 'AbortError') ||
+      (error instanceof Error && error.name === 'AbortError');
+    if (isAbortError) {
+      console.debug('[exchangeClient] fetchPendingExchanges aborted', error);
+      return { ok: true, exchanges: [] };
+    }
+    console.warn('[exchangeClient] fetchPendingExchanges failed', error);
+    return {
+      ok: false,
+      message: 'Ошибка сети при запросе обменов.',
+    };
   }
 }

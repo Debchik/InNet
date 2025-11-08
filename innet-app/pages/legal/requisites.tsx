@@ -1,6 +1,6 @@
-import Head from 'next/head';
 import Layout from '../../components/Layout';
 import { legalContactInfo } from '../../data/legal';
+import { seoConfig } from '../../lib/seo';
 
 const requisitesList = [
   { label: 'ФИО самозанятого', value: legalContactInfo.legalHolderFullName },
@@ -12,14 +12,20 @@ const requisitesList = [
 
 export default function LegalRequisitesPage() {
   return (
-    <Layout>
-      <Head>
-        <title>Контакты и реквизиты InNet</title>
-        <meta
-          name="description"
-          content="Контактные данные и реквизиты исполнителя цифрового сервиса InNet."
-        />
-      </Head>
+    <Layout
+      seo={{
+        title: 'Контакты и реквизиты InNet',
+        description: 'Официальные контактные данные, телефон и реквизиты исполнителя цифрового сервиса InNet.',
+        keywords: ['контакты InNet', 'реквизиты InNet', 'служба поддержки InNet'],
+        structuredData: {
+          '@context': 'https://schema.org',
+          '@type': 'ContactPage',
+          name: 'Контакты и реквизиты InNet',
+          url: `${seoConfig.siteUrl}/legal/requisites`,
+          description: 'Как связаться с сервисом InNet и какие реквизиты использовать для договоров и оплат.',
+        },
+      }}
+    >
       <section className="px-4 py-16 bg-background">
         <div className="max-w-3xl mx-auto space-y-8 text-gray-100">
           <header className="space-y-3">

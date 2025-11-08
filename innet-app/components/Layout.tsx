@@ -2,9 +2,11 @@ import Link from 'next/link';
 import { ReactNode, useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { legalContactInfo } from '../data/legal';
+import SeoHead, { SeoHeadProps } from './SeoHead';
 
 interface LayoutProps {
   children: ReactNode;
+  seo?: SeoHeadProps;
 }
 
 /**
@@ -12,12 +14,13 @@ interface LayoutProps {
  * The header contains basic navigation; adjust the links here as you
  * expand the application. The footer displays minimal metadata.
  */
-export default function Layout({ children }: LayoutProps) {
+export default function Layout({ children, seo }: LayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const router = useRouter();
   const year = new Date().getFullYear();
-  const isAppRoute = router.pathname.startsWith('/app');
-  const isLandingHome = router.pathname === '/';
+  const pathname = router?.pathname ?? '/';
+  const isAppRoute = pathname.startsWith('/app');
+  const isLandingHome = pathname === '/';
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
@@ -118,9 +121,19 @@ export default function Layout({ children }: LayoutProps) {
   }; */
 
   const brandHref = hydrated && isAuthenticated ? '/app/qr' : '/';
+  const shouldBlockIndex =
+    pathname.startsWith('/app') ||
+    pathname.startsWith('/share') ||
+    pathname.startsWith('/auth');
+  const seoPayload: SeoHeadProps = {
+    ...seo,
+    noIndex: typeof seo?.noIndex === 'boolean' ? seo.noIndex : shouldBlockIndex,
+  };
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <>
+      <SeoHead {...seoPayload} />
+      <div className="min-h-screen flex flex-col">
       {/* Header */}
       <header className="relative flex items-center gap-4 border-b border-gray-700 px-4 py-3">
         <Link href={brandHref} className="text-2xl font-bold text-primary">
@@ -263,6 +276,7 @@ export default function Layout({ children }: LayoutProps) {
         </div>
         <p>© {year} InNet. Все права защищены.</p>
       </footer>
-    </div>
+      </div>
+    </>
   );
 }

@@ -26,6 +26,7 @@ import {
   parseShareToken,
   ShareGroup,
   SharePayload,
+  SHARE_ALIAS_PREFIX,
   SHARE_PREFIX,
   SHARE_VERSION,
   buildShareUrl,
@@ -38,12 +39,19 @@ import { usePrivacy } from '../../hooks/usePrivacy';
 import { isUnlimited } from '../../lib/plans';
 import { ShareProfile, loadShareProfile, SHARE_PROFILE_STORAGE_KEYS } from '../../lib/shareProfile';
 import { groupToShare, syncSelection } from '../../lib/shareUtils';
+import { createShareAliasLink, resolveAliasToken } from '../../lib/shareAliasClient';
 
 const QRScanner = dynamic(() => import('../../components/QRScanner'), { ssr: false });
 
 const RESPONSE_OVERLAY_CLOSE_DELAY = 80;
 const EXCHANGE_POLL_INTERVAL = 5000;
 const QR_VALUE_SAFE_LIMIT = 2953;
+
+type LinkState = {
+  link: string;
+  overflow: boolean;
+  pending: boolean;
+};
 
 export default function QRPage() {
   // Удаляем groupsExpanded, группы всегда видны полностью
@@ -69,6 +77,16 @@ export default function QRPage() {
     message: string;
   } | null>(null);
   const [exchangeError, setExchangeError] = useState<string | null>(null);
+  const [shareLinkState, setShareLinkState] = useState<LinkState>({
+    link: '',
+    overflow: false,
+    pending: false,
+  });
+  const [responseLinkState, setResponseLinkState] = useState<LinkState>({
+    link: '',
+    overflow: false,
+    pending: false,
+  });
   const { entitlements } = usePlan();
   const { level: privacyLevel } = usePrivacy(entitlements);
   const [contacts, setContacts] = useState(loadContacts());
@@ -222,33 +240,50 @@ export default function QRPage() {
     }
   }, [profileId, profile, shareGroups, shareNonce, ownerContact, privacyLevel]);
 
-  const shareLinkInfo = useMemo(() => {
+  useEffect(() => {
     if (!shareTokenInfo.token || shareTokenInfo.token === SHARE_PREFIX) {
-      return { link: '', overflow: false };
+      setShareLinkState({ link: '', overflow: false, pending: false });
+      return;
     }
     if (!isReady && typeof window === 'undefined') {
-      return { link: '', overflow: false };
+      setShareLinkState({ link: '', overflow: false, pending: false });
+      return;
     }
-    const link = buildShareUrl(shareTokenInfo.token);
-    return { link, overflow: link.length > QR_VALUE_SAFE_LIMIT };
-  }, [shareTokenInfo.token, isReady]);
+    let cancelled = false;
+    const fallbackLink = buildShareUrl(shareTokenInfo.token);
+    const fallbackOverflow = fallbackLink.length > QR_VALUE_SAFE_LIMIT;
+    setShareLinkState({ link: fallbackLink, overflow: fallbackOverflow, pending: true });
 
-  const shareLink = shareLinkInfo.link;
-  const shareOverflow = shareLinkInfo.overflow;
+    void (async () => {
+      try {
+        const { url } = await createShareAliasLink(shareTokenInfo.token);
+        if (cancelled) return;
+        setShareLinkState({ link: url, overflow: url.length > QR_VALUE_SAFE_LIMIT, pending: false });
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('[qr] Failed to create share alias', err);
+        setShareLinkState({ link: fallbackLink, overflow: fallbackOverflow, pending: false });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [shareTokenInfo.token, isReady]);
 
   useEffect(() => {
     if (shareTokenInfo.error) {
       setShareError(shareTokenInfo.error);
       return;
     }
-    if (shareOverflow) {
+    if (shareLinkState.overflow) {
       setShareError(
         'QR-код не помещает столько информации. Снимите часть групп или сократите факты.'
       );
       return;
     }
     setShareError(null);
-  }, [shareTokenInfo.error, shareOverflow]);
+  }, [shareTokenInfo.error, shareLinkState.overflow]);
 
   const responseGroups = useMemo<ShareGroup[]>(() => {
     return groups
@@ -277,19 +312,36 @@ export default function QRPage() {
     }
   }, [profileId, profile, responseGroups, responseNonce, responseOpen]);
 
-  const responseLinkInfo = useMemo(() => {
-    if (!responseToken) {
-      return { link: '', overflow: false };
+  useEffect(() => {
+    if (!responseToken || !responseOpen) {
+      setResponseLinkState({ link: '', overflow: false, pending: false });
+      return;
     }
     if (!isReady && typeof window === 'undefined') {
-      return { link: '', overflow: false };
+      setResponseLinkState({ link: '', overflow: false, pending: false });
+      return;
     }
-    const link = buildShareUrl(responseToken);
-    return { link, overflow: link.length > QR_VALUE_SAFE_LIMIT };
-  }, [responseToken, isReady]);
+    let cancelled = false;
+    const fallbackLink = buildShareUrl(responseToken);
+    const fallbackOverflow = fallbackLink.length > QR_VALUE_SAFE_LIMIT;
+    setResponseLinkState({ link: fallbackLink, overflow: fallbackOverflow, pending: true });
 
-  const responseLink = responseLinkInfo.link;
-  const responseOverflow = responseLinkInfo.overflow;
+    void (async () => {
+      try {
+        const { url } = await createShareAliasLink(responseToken);
+        if (cancelled) return;
+        setResponseLinkState({ link: url, overflow: url.length > QR_VALUE_SAFE_LIMIT, pending: false });
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('[qr] Failed to create response alias', err);
+        setResponseLinkState({ link: fallbackLink, overflow: fallbackOverflow, pending: false });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [responseToken, responseOpen, isReady]);
 
   useEffect(() => {
     if (!incomingExchange) return;
@@ -323,7 +375,7 @@ export default function QRPage() {
       fetching = true;
       try {
         const result = await fetchPendingExchanges(profileId);
-        if (cancelled) return;
+        if (cancelled || !result) return;
 
         if (result.ok) {
           let limitBlocked = false;
@@ -355,6 +407,10 @@ export default function QRPage() {
         } else {
           setExchangeError(result.message);
         }
+      } catch (error) {
+        if (cancelled) return;
+        console.warn('[qr] fetchPendingExchanges crashed', error);
+        setExchangeError('Не удалось получить обмены с сервера.');
       } finally {
         fetching = false;
       }
@@ -385,6 +441,107 @@ export default function QRPage() {
     contactLimitMessage,
   ]);
 
+  const processScan = useCallback(
+    async (rawValue: string): Promise<boolean> => {
+      if (!rawValue) {
+        setScanError('Не удалось распознать ссылку обмена.');
+        setScanMessage(null);
+        return false;
+      }
+      const trimmedValue = rawValue.trim();
+      if (!trimmedValue) {
+        setScanError('Не удалось распознать ссылку обмена.');
+        setScanMessage(null);
+        return false;
+      }
+      const extracted = extractShareToken(trimmedValue) ?? trimmedValue;
+      if (
+        !extracted ||
+        (!extracted.startsWith(SHARE_PREFIX) && !extracted.startsWith(SHARE_ALIAS_PREFIX))
+      ) {
+        setScanError('Не удалось распознать ссылку обмена.');
+        setScanMessage(null);
+        return false;
+      }
+
+      const now = Date.now();
+      if (lastTokenRef.current === extracted && now - lastTokenTsRef.current < 1500) {
+        return false;
+      }
+      lastTokenRef.current = extracted;
+      lastTokenTsRef.current = now;
+
+      let token = extracted;
+      if (token.startsWith(SHARE_ALIAS_PREFIX)) {
+        try {
+          token = await resolveAliasToken(token);
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : 'Не удалось расшифровать короткую ссылку.';
+          setScanError(message);
+          setScanMessage(null);
+          return false;
+        }
+      }
+
+      if (!token.startsWith(SHARE_PREFIX)) {
+        setScanError('Не удалось распознать ссылку обмена.');
+        setScanMessage(null);
+        return false;
+      }
+
+      let payload: SharePayload;
+      try {
+        payload = parseShareToken(token);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Не удалось прочитать QR-код.';
+        setScanError(message);
+        setScanMessage(null);
+        return false;
+      }
+
+      if (payload?.owner?.id && payload.owner.id === profileId) {
+        setScanError('Эй, эгоист! Сам себя в друзья не записывай 😅');
+        setScanMessage(null);
+        return false;
+      }
+      if (isContactLimitExceeded(payload?.owner?.id)) {
+        setScanError(contactLimitMessage);
+        setScanMessage(null);
+        return false;
+      }
+      const { contact, wasCreated, addedFacts } = mergeContactFromShare(payload);
+      setContacts(loadContacts());
+      setLastContactId(contact.id);
+      setScanError(null);
+      void sendReciprocalExchange(payload.owner.id);
+
+      if (wasCreated) {
+        setScanMessage(`Контакт «${contact.name}» добавлен.`);
+        setResponseOpen(false);
+        setTimeout(() => {
+          router.push(`/app/contacts/${contact.id}`);
+        }, RESPONSE_OVERLAY_CLOSE_DELAY);
+      } else {
+        if (addedFacts > 0) {
+          setScanMessage(`Контакт «${contact.name}» обновлён: добавлено ${addedFacts} фактов.`);
+        } else {
+          setScanMessage(`Контакт «${contact.name}» уже есть, новых фактов нет.`);
+        }
+        router.push(`/app/contacts/${contact.id}`);
+      }
+
+      return true;
+    },
+    [
+      contactLimitMessage,
+      isContactLimitExceeded,
+      profileId,
+      router,
+      sendReciprocalExchange,
+    ]
+  );
+
   const handleTokenSubmit = async (rawInput?: string) => {
     if (typeof window === 'undefined') return;
     try {
@@ -412,84 +569,22 @@ export default function QRPage() {
         }
       }
 
-      const token = extractShareToken(source) ?? source.trim();
-      let payload;
-      try {
-        payload = parseShareToken(token.trim());
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Некорректный токен.';
-        setScanError(message);
-        setScanMessage(null);
-        return;
+      const handled = await processScan(source);
+      if (handled && rawInput != null) {
+        setTokenInput('');
       }
-      if (payload?.owner?.id && payload.owner.id === profileId) {
-        setScanError('Эй, эгоист! Сам себя в друзья не записывай 😅');
-        setScanMessage(null);
-        return;
-      }
-      handleScan(token, payload);
-      setTokenInput('');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Не удалось обработать ссылку.';
       setScanError(message);
     }
   };
 
-  const handleScan = (decoded: string, preParsed?: ReturnType<typeof parseShareToken>) => {
-    if (!decoded) return;
-    const normalized = preParsed ? decoded.trim() : extractShareToken(decoded) ?? decoded.trim();
-    if (!normalized || !normalized.startsWith(SHARE_PREFIX)) {
-      setScanError('Не удалось распознать ссылку обмена.');
-      setScanMessage(null);
-      return;
-    }
-
-    const now = Date.now();
-    if (lastTokenRef.current === normalized && now - lastTokenTsRef.current < 1500) {
-      return;
-    }
-    lastTokenRef.current = normalized;
-    lastTokenTsRef.current = now;
-
-    try {
-      const payload = preParsed ?? parseShareToken(normalized);
-      if (payload?.owner?.id && payload.owner.id === profileId) {
-        setScanError('Эй, эгоист! Сам себя в друзья не записывай 😅');
-        setScanMessage(null);
-        return;
-      }
-      if (isContactLimitExceeded(payload?.owner?.id)) {
-        setScanError(contactLimitMessage);
-        setScanMessage(null);
-        return;
-      }
-      const { contact, wasCreated, addedFacts } = mergeContactFromShare(payload);
-      setContacts(loadContacts());
-      setLastContactId(contact.id);
-      setScanError(null);
-      void sendReciprocalExchange(payload.owner.id);
-
-      if (wasCreated) {
-        setScanMessage(`Контакт «${contact.name}» добавлен.`);
-        setResponseOpen(false);
-        setLastContactId(contact.id);
-        setTimeout(() => {
-          router.push(`/app/contacts/${contact.id}`);
-        }, RESPONSE_OVERLAY_CLOSE_DELAY);
-      } else {
-        if (addedFacts > 0) {
-          setScanMessage(`Контакт «${contact.name}» обновлён: добавлено ${addedFacts} фактов.`);
-        } else {
-          setScanMessage(`Контакт «${contact.name}» уже есть, новых фактов нет.`);
-        }
-        router.push(`/app/contacts/${contact.id}`);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Не удалось прочитать QR-код.';
-      setScanError(message);
-      setScanMessage(null);
-    }
-  };
+  const handleScan = useCallback(
+    (decoded: string) => {
+      void processScan(decoded);
+    },
+    [processScan]
+  );
 
   const handleScanError = (error: unknown) => {
     if (!error) return;
@@ -603,20 +698,37 @@ export default function QRPage() {
         {mode === 'generate' ? (
           <section className="mx-auto mt-6 flex w-full max-w-lg flex-col items-center gap-6 rounded-2xl bg-gray-800 px-6 py-8 shadow-lg">
             {/* <ProfileSummary profile={profile} /> */}
-            <div className="rounded-2xl bg-gray-900 p-5 shadow-inner">
+            <div className="rounded-[28px] border border-cyan-500/20 bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-slate-800/60 p-6 shadow-[0_35px_80px_rgba(8,145,178,0.35)] backdrop-blur-xl">
               {shareError ? (
                 <p className="max-w-xs text-center text-sm text-red-400">{shareError}</p>
               ) : (
-                <QRCode
-                  value={shareLink || SHARE_PREFIX}
-                  fgColor="#0D9488"
-                  bgColor="#0F172A"
-                  level="L"
-                  style={{
-                    width: 'min(80vw, 320px)',
-                    height: 'min(80vw, 320px)',
-                  }}
-                />
+                <div
+                  className="relative rounded-2xl bg-slate-950/40 p-4 shadow-inner"
+                  aria-busy={shareLinkState.pending}
+                >
+                  <div
+                    className={`transition duration-200 ${
+                      shareLinkState.pending ? 'blur-sm opacity-70' : ''
+                    }`}
+                  >
+                    <QRCode
+                      value={shareLinkState.link || SHARE_PREFIX}
+                      fgColor="#80F2E3"
+                      bgColor="transparent"
+                      level="L"
+                      style={{
+                        width: 'min(80vw, 320px)',
+                        height: 'min(80vw, 320px)',
+                        filter: 'drop-shadow(0 20px 40px rgba(8,145,178,0.35))',
+                      }}
+                    />
+                  </div>
+                  {shareLinkState.pending && (
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs font-semibold uppercase tracking-wide text-cyan-200">
+                      Готовим QR...
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 
@@ -687,7 +799,7 @@ export default function QRPage() {
           </section>
         ) : (
           <section className="mx-auto mt-6 flex w-full max-w-lg flex-col items-center gap-4 rounded-2xl bg-gray-800 px-6 py-8 shadow-lg">
-            <QRScanner onScan={handleScan} onError={handleScanError} />
+            <QRScanner onScan={(value) => { void handleScan(value); }} onError={handleScanError} />
             {scanError && (
               <p className="text-center text-sm text-red-400 max-w-xs">{scanError}</p>
             )}
@@ -744,8 +856,9 @@ export default function QRPage() {
           selection={responseSelection}
           onToggle={handleResponseToggle}
           onClose={closeResponseModal}
-          link={responseLink}
-          overflow={responseOverflow}
+          link={responseLinkState.link}
+          overflow={responseLinkState.overflow}
+          pending={responseLinkState.pending}
         />
       )}
       {manualModalOpen && (
@@ -845,6 +958,7 @@ function ResponseModal({
   onClose,
   link,
   overflow,
+  pending,
 }: {
   profile: ShareProfile;
   groups: FactGroup[];
@@ -853,6 +967,7 @@ function ResponseModal({
   onClose: () => void;
   link: string;
   overflow: boolean;
+  pending: boolean;
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
 
@@ -928,20 +1043,37 @@ function ResponseModal({
             <ShareControls
               onCopy={handleCopy}
               copyState={copyState}
-              copyDisabled={!link}
+              copyDisabled={!link || pending}
             />
-            <div className="rounded-2xl bg-slate-900 p-5 shadow-inner">
+            <div className="rounded-[28px] border border-sky-400/20 bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-slate-800/60 p-5 shadow-[0_30px_70px_rgba(14,165,233,0.35)] backdrop-blur-xl">
               {link && !overflow ? (
-                <QRCode
-                  value={link}
-                  fgColor="#38BDF8"
-                  bgColor="#020617"
-                  level="L"
-                  style={{
-                    width: 'min(70vw, 280px)',
-                    height: 'min(70vw, 280px)',
-                  }}
-                />
+                <div
+                  className="relative rounded-2xl bg-slate-950/40 p-3 shadow-inner"
+                  aria-busy={pending}
+                >
+                  <div
+                    className={`transition duration-200 ${
+                      pending ? 'blur-sm opacity-70' : ''
+                    }`}
+                  >
+                    <QRCode
+                      value={link}
+                      fgColor="#7DD3FC"
+                      bgColor="transparent"
+                      level="L"
+                      style={{
+                        width: 'min(70vw, 280px)',
+                        height: 'min(70vw, 280px)',
+                        filter: 'drop-shadow(0 18px 38px rgba(15,118,230,0.35))',
+                      }}
+                    />
+                  </div>
+                  {pending && (
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs font-semibold uppercase tracking-wide text-sky-200">
+                      Обновляем QR...
+                    </div>
+                  )}
+                </div>
               ) : overflow ? (
                 <p className="w-48 text-center text-sm text-red-400">
                   Слишком много данных для ответа. Снимите одну из групп или сократите факты.

@@ -12,6 +12,7 @@ import type { PrivacyLevel } from './privacy';
 import { mapPrivacyLevel } from './privacy';
 
 export const SHARE_PREFIX = 'innet-share:';
+export const SHARE_ALIAS_PREFIX = 'innet-share-alias:';
 export const SHARE_VERSION = 1;
 export const MAX_SHARE_TOKEN_SIZE = 4096; // Soft threshold to keep QR-коды пригодными для сканирования
 const SHARE_TOKEN_COMPRESSED_PREFIX = 'c.';
@@ -51,6 +52,25 @@ export interface MergeResult {
 
 export function buildShareUrl(token: string, originOverride?: string): string {
   if (!token) return '';
+  const origin = resolveShareOrigin(originOverride);
+  if (!origin) {
+    return token;
+  }
+  return `${origin}/share?token=${token}`;
+}
+
+export function buildShareAliasUrl(slug: string, originOverride?: string): string {
+  if (!slug) return '';
+  const normalizedSlug = normalizeAliasSlug(slug);
+  if (!normalizedSlug) return slug;
+  const origin = resolveShareOrigin(originOverride);
+  if (!origin) {
+    return normalizedSlug;
+  }
+  return `${origin}/s/${normalizedSlug}`;
+}
+
+function resolveShareOrigin(originOverride?: string): string {
   const vercelHost = process.env.NEXT_PUBLIC_VERCEL_URL;
   const envOrigin =
     process.env.NEXT_PUBLIC_APP_ORIGIN ||
@@ -63,10 +83,9 @@ export function buildShareUrl(token: string, originOverride?: string): string {
     envOrigin ||
     'https://innet.app';
   if (!origin) {
-    return token;
+    return '';
   }
-  const normalizedOrigin = origin.replace(/\/$/, '');
-  return `${normalizedOrigin}/share?token=${token}`;
+  return origin.replace(/\/$/, '');
 }
 
 export function extractShareToken(value: string | null | undefined): string | null {
@@ -75,6 +94,18 @@ export function extractShareToken(value: string | null | undefined): string | nu
   if (!trimmed) return null;
   if (trimmed.startsWith(SHARE_PREFIX)) {
     return trimmed;
+  }
+  if (trimmed.startsWith(SHARE_ALIAS_PREFIX)) {
+    const alias = normalizeAliasSlug(trimmed.slice(SHARE_ALIAS_PREFIX.length));
+    return alias ? `${SHARE_ALIAS_PREFIX}${alias}` : null;
+  }
+
+  if (/^innet-share-alias%3A/i.test(trimmed)) {
+    const decoded = decodeURIComponentSafe(trimmed);
+    const alias = normalizeAliasSlug(decoded.slice(SHARE_ALIAS_PREFIX.length));
+    if (alias) {
+      return `${SHARE_ALIAS_PREFIX}${alias}`;
+    }
   }
 
   if (/^innet-share%3A/i.test(trimmed)) {
@@ -99,6 +130,12 @@ export function extractShareToken(value: string | null | undefined): string | nu
         const decoded = decodeCandidate(slug);
         if (decoded) return decoded;
       }
+      if (path.startsWith('/s/')) {
+        const aliasSlug = normalizeAliasSlug(path.slice('/s/'.length));
+        if (aliasSlug) {
+          return `${SHARE_ALIAS_PREFIX}${aliasSlug}`;
+        }
+      }
     } catch {
       // Ignore URL parse errors and fall through.
     }
@@ -110,6 +147,11 @@ export function extractShareToken(value: string | null | undefined): string | nu
     if (decoded) return decoded;
   }
 
+  const aliasSlug = normalizeAliasSlug(trimmed);
+  if (aliasSlug) {
+    return `${SHARE_ALIAS_PREFIX}${aliasSlug}`;
+  }
+
   if (!trimmed.includes('://')) {
     const candidate = decodeCandidate(trimmed);
     if (candidate && candidate.startsWith(SHARE_PREFIX)) {
@@ -118,6 +160,12 @@ export function extractShareToken(value: string | null | undefined): string | nu
   }
 
   return null;
+}
+
+export function extractAliasSlug(token: string | null | undefined): string | null {
+  if (!token || typeof token !== 'string') return null;
+  if (!token.startsWith(SHARE_ALIAS_PREFIX)) return null;
+  return normalizeAliasSlug(token.slice(SHARE_ALIAS_PREFIX.length));
 }
 
 export function generateShareToken(payload: SharePayload): string {
@@ -488,4 +536,22 @@ function utf8ArrayToString(bytes: Uint8Array): string {
     }
   }
   return out;
+}
+
+function normalizeAliasSlug(slug: string | null | undefined): string | null {
+  if (!slug) return null;
+  const trimmed = slug.trim();
+  if (!trimmed) return null;
+  if (!/^[A-Za-z0-9_-]{4,64}$/.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+function decodeURIComponentSafe(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }

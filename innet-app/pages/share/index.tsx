@@ -32,6 +32,7 @@ import { loadShareProfile, ShareProfile, SHARE_PROFILE_STORAGE_KEYS } from '../.
 import { usePrivacy } from '../../hooks/usePrivacy';
 import { groupToShare, syncSelection } from '../../lib/shareUtils';
 import { sendExchange } from '../../lib/exchangeClient';
+import { resolveAliasToken } from '../../lib/shareAliasClient';
 
 type PageStatus = 'loading' | 'ready' | 'adding' | 'added' | 'error';
 
@@ -200,6 +201,8 @@ export default function ShareLandingPage() {
 
   useEffect(() => {
     if (!router.isReady) return;
+    let cancelled = false;
+    setStatus('loading');
     setError(null);
     setSharePayload(null);
 
@@ -213,6 +216,12 @@ export default function ShareLandingPage() {
         if (normalized) return normalized;
       }
 
+      const slugValue = router.query.slug;
+      if (typeof slugValue === 'string' && slugValue.trim()) {
+        const normalized = extractShareToken(slugValue);
+        if (normalized) return normalized;
+      }
+
       if (typeof window !== 'undefined') {
         const fromHref = extractShareToken(window.location.href);
         if (fromHref) return fromHref;
@@ -221,25 +230,37 @@ export default function ShareLandingPage() {
       return null;
     };
 
-    const normalizedToken = extractFromRouter();
-    if (!normalizedToken) {
-      setStatus('error');
-      setError('Ссылка повреждена или больше не действует. Попросите отправить новый QR-код.');
-      return;
-    }
+    const resolveShare = async () => {
+      const normalizedToken = extractFromRouter();
+      if (!normalizedToken) {
+        if (!cancelled) {
+          setStatus('error');
+          setError('Ссылка повреждена или больше не действует. Попросите отправить новый QR-код.');
+        }
+        return;
+      }
 
-    try {
-      const payload = parseShareToken(normalizedToken);
-      setShareToken(normalizedToken);
-      setSharePayload(payload);
-      setProgressMessage(null);
-      setStatus('ready');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Не удалось прочитать данные контакта.';
-      setError(message);
-      setStatus('error');
-    }
-  }, [router.isReady, router.query.token, router.asPath]);
+      try {
+        const resolvedToken = await resolveAliasToken(normalizedToken);
+        if (cancelled) return;
+        const payload = parseShareToken(resolvedToken);
+        setShareToken(resolvedToken);
+        setSharePayload(payload);
+        setProgressMessage(null);
+        setStatus('ready');
+      } catch (err) {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : 'Не удалось прочитать данные контакта.';
+        setError(message);
+        setStatus('error');
+      }
+    };
+
+    void resolveShare();
+    return () => {
+      cancelled = true;
+    };
+  }, [router.isReady, router.query.token, router.query.slug, router.asPath]);
 
   const handleRecordEngagement = useCallback(
     async (payload: EngagementPayload) => {

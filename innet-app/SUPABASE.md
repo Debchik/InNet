@@ -143,3 +143,35 @@ Row-level security policies should at minimum allow the service role to
 
 Both routes gracefully fall back when Supabase is not configured, but the sync
 toggle and automatic two-way exchange require the tables above to exist.
+
+### `share_links`
+
+Maps compact slugs to the full QR payload so that every QR code encodes a short,
+camera-friendly URL. Each entry expires automatically to keep the table small.
+
+```sql
+create table if not exists public.share_links (
+  slug text primary key,
+  token text not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists share_links_token_idx on public.share_links (token);
+create index if not exists share_links_exp_idx on public.share_links (expires_at);
+```
+
+Add a scheduled job (or Supabase's automatic row expirer) that deletes rows
+where `expires_at < now()` so expired slugs do not accumulate.
+
+## API endpoints
+
+- `POST /api/account/register` – persist a new local password account in Supabase.
+- `POST /api/account/login` – validate credentials (email or phone) against Supabase.
+- `PUT /api/account/update` – sync profile/contact/subscription updates to Supabase.
+- `GET /api/facts?profileId=...` – fetch fact groups + sync flag for a profile.
+- `PUT /api/facts` – upsert fact groups and toggle sync (service role only).
+- `GET /api/exchange?profileId=...` – pull pending exchanges for the QR owner.
+- `POST /api/exchange` – store a reciprocal payload after scanning.
+- `POST /api/share-link` – create or reuse a short slug for the current QR payload.
+- `GET /api/share-link?slug=...` – resolve a slug back into the full share token.
