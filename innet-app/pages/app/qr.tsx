@@ -42,6 +42,7 @@ import { groupToShare, syncSelection } from '../../lib/shareUtils';
 const QRScanner = dynamic(() => import('../../components/QRScanner'), { ssr: false });
 
 const RESPONSE_OVERLAY_CLOSE_DELAY = 80;
+const EXCHANGE_POLL_INTERVAL = 5000;
 const QR_VALUE_SAFE_LIMIT = 2953;
 
 export default function QRPage() {
@@ -314,49 +315,75 @@ export default function QRPage() {
   useEffect(() => {
     if (!profileId || mode !== 'generate') return;
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let fetching = false;
 
     const fetchPending = async () => {
-      const result = await fetchPendingExchanges(profileId);
-      if (cancelled) return;
+      if (fetching || cancelled) return;
+      fetching = true;
+      try {
+        const result = await fetchPendingExchanges(profileId);
+        if (cancelled) return;
 
-      if (result.ok) {
-        let limitBlocked = false;
-        if (result.exchanges.length > 0) {
-          for (const exchange of result.exchanges) {
-            try {
-              if (isContactLimitExceeded(exchange.payload.owner?.id)) {
-                setExchangeError(contactLimitMessage);
-                limitBlocked = true;
-                continue;
+        if (result.ok) {
+          let limitBlocked = false;
+          if (result.exchanges.length > 0) {
+            for (const exchange of result.exchanges) {
+              try {
+                if (isContactLimitExceeded(exchange.payload.owner?.id)) {
+                  setExchangeError(contactLimitMessage);
+                  limitBlocked = true;
+                  continue;
+                }
+                const outcome = mergeContactFromShare(exchange.payload);
+                setContacts(loadContacts());
+                setLastContactId(outcome.contact.id);
+                const message = outcome.wasCreated
+                  ? `Контакт «${outcome.contact.name}» добавлен автоматически.`
+                  : outcome.addedFacts > 0
+                    ? `Контакт «${outcome.contact.name}» обновлён: добавлено ${outcome.addedFacts} фактов.`
+                    : `Контакт «${outcome.contact.name}» уже есть в списке.`;
+                setIncomingExchange({ contactId: outcome.contact.id, message });
+              } catch (err) {
+                console.error('[qr] Failed to merge incoming exchange', err);
               }
-              const outcome = mergeContactFromShare(exchange.payload);
-              setContacts(loadContacts());
-              setLastContactId(outcome.contact.id);
-              const message = outcome.wasCreated
-                ? `Контакт «${outcome.contact.name}» добавлен автоматически.`
-                : outcome.addedFacts > 0
-                  ? `Контакт «${outcome.contact.name}» обновлён: добавлено ${outcome.addedFacts} фактов.`
-                  : `Контакт «${outcome.contact.name}» уже есть в списке.`;
-              setIncomingExchange({ contactId: outcome.contact.id, message });
-            } catch (err) {
-              console.error('[qr] Failed to merge incoming exchange', err);
             }
           }
+          if (!limitBlocked) {
+            setExchangeError(null);
+          }
+        } else {
+          setExchangeError(result.message);
         }
-        if (!limitBlocked) {
-          setExchangeError(null);
-        }
-      } else {
-        setExchangeError(result.message);
+      } finally {
+        fetching = false;
       }
     };
 
+    const schedule = () => {
+      if (cancelled) return;
+      timer = setTimeout(async () => {
+        await fetchPending();
+        schedule();
+      }, EXCHANGE_POLL_INTERVAL);
+    };
+
     void fetchPending();
+    schedule();
 
     return () => {
       cancelled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
     };
-  }, [profileId, mode, shareTokenInfo.token]);
+  }, [
+    profileId,
+    mode,
+    shareTokenInfo.token,
+    isContactLimitExceeded,
+    contactLimitMessage,
+  ]);
 
   const handleTokenSubmit = async (rawInput?: string) => {
     if (typeof window === 'undefined') return;
