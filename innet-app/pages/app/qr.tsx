@@ -7,6 +7,7 @@ import { useRouter } from 'next/router';
 import QRCode from 'react-qr-code';
 import Layout from '../../components/Layout';
 import OnboardingHint from '../../components/onboarding/OnboardingHint';
+import ToggleBar from '../../components/ToggleBar';
 import {
   FactGroup,
   loadFactGroups,
@@ -35,26 +36,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { usePlan } from '../../hooks/usePlan';
 import { usePrivacy } from '../../hooks/usePrivacy';
 import { isUnlimited } from '../../lib/plans';
+import { ShareProfile, loadShareProfile, SHARE_PROFILE_STORAGE_KEYS } from '../../lib/shareProfile';
+import { groupToShare, syncSelection } from '../../lib/shareUtils';
 
 const QRScanner = dynamic(() => import('../../components/QRScanner'), { ssr: false });
 
-type ShareProfile = {
-  name: string;
-  avatar?: string;
-  phone?: string;
-  telegram?: string;
-  instagram?: string;
-};
-
 const RESPONSE_OVERLAY_CLOSE_DELAY = 80;
-const PROFILE_STORAGE_KEYS = [
-  'innet_current_user_name',
-  'innet_current_user_surname',
-  'innet_current_user_phone',
-  'innet_current_user_telegram',
-  'innet_current_user_instagram',
-  'innet_current_user_avatar',
-];
 const QR_VALUE_SAFE_LIMIT = 2953;
 
 export default function QRPage() {
@@ -145,7 +132,7 @@ export default function QRPage() {
       if (event.key === 'innet_contacts') {
         setContacts(loadContacts());
       }
-      if (PROFILE_STORAGE_KEYS.includes(event.key)) {
+      if (event.key && SHARE_PROFILE_STORAGE_KEYS.includes(event.key)) {
         updateProfile();
       }
     };
@@ -597,7 +584,11 @@ export default function QRPage() {
                   value={shareLink || SHARE_PREFIX}
                   fgColor="#0D9488"
                   bgColor="#0F172A"
-                  style={{ width: 240, height: 240 }}
+                  level="L"
+                  style={{
+                    width: 'min(80vw, 320px)',
+                    height: 'min(80vw, 320px)',
+                  }}
                 />
               )}
             </div>
@@ -740,18 +731,6 @@ export default function QRPage() {
   );
 }
 
-function groupToShare(group: FactGroup): ShareGroup {
-  return {
-    id: group.id,
-    name: group.name,
-    color: group.color,
-    facts: group.facts.map((fact) => ({
-      id: fact.id,
-      text: fact.text,
-    })),
-  };
-}
-
 function ModeButton({
   active,
   onClick,
@@ -769,35 +748,6 @@ function ModeButton({
       }`}
     >
       {children}
-    </button>
-  );
-}
-
-function ToggleBar({
-  active,
-  onToggle,
-  accentColor,
-}: {
-  active: boolean;
-  onToggle: () => void;
-  accentColor?: string;
-}) {
-  // Трек 56x32px, кружок 28x28px, смещение 28px, кружок всегда по центру
-  return (
-    <button
-      onClick={onToggle}
-      type="button"
-      className={`flex items-center h-8 w-14 rounded-full transition duration-200 px-1 ${
-        active ? 'bg-primary/80' : 'bg-slate-600'
-      }`}
-      style={active && accentColor ? { backgroundColor: accentColor } : undefined}
-    >
-      <span
-        className={`h-7 w-7 rounded-full bg-slate-100 shadow transition-transform duration-200 ${
-          active ? 'translate-x-6' : ''
-        }`}
-        style={{ transform: active ? 'translateX(24px)' : 'translateX(0)' }}
-      />
     </button>
   );
 }
@@ -959,7 +909,11 @@ function ResponseModal({
                   value={link}
                   fgColor="#38BDF8"
                   bgColor="#020617"
-                  style={{ width: 220, height: 220 }}
+                  level="L"
+                  style={{
+                    width: 'min(70vw, 280px)',
+                    height: 'min(70vw, 280px)',
+                  }}
                 />
               ) : overflow ? (
                 <p className="w-48 text-center text-sm text-red-400">
@@ -979,44 +933,6 @@ function ResponseModal({
       </div>
     </div>
   );
-}
-
-function loadShareProfile(): ShareProfile {
-  if (typeof window === 'undefined') {
-    return { name: 'Вы' };
-  }
-  const name = (localStorage.getItem('innet_current_user_name') ?? '').trim();
-  const surname = (localStorage.getItem('innet_current_user_surname') ?? '').trim();
-  const fullName = [name, surname].filter(Boolean).join(' ').trim() || 'Вы';
-  return {
-    name: fullName,
-    avatar: cleanValue(localStorage.getItem('innet_current_user_avatar')),
-    phone: cleanValue(localStorage.getItem('innet_current_user_phone')),
-    telegram: cleanHandle(localStorage.getItem('innet_current_user_telegram')),
-    instagram: cleanHandle(localStorage.getItem('innet_current_user_instagram')),
-  };
-}
-
-function cleanValue(value: string | null): string | undefined {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-function cleanHandle(value: string | null): string | undefined {
-  const cleaned = cleanValue(value);
-  if (!cleaned) return undefined;
-  return cleaned.startsWith('@') ? cleaned : `@${cleaned.replace(/^@+/, '')}`;
-}
-
-function syncSelection(current: string[], source: FactGroup[]): string[] {
-  const ids = source.map((group) => group.id);
-  if (!current.length) return ids;
-  const merged = current.filter((id) => ids.includes(id));
-  ids.forEach((id) => {
-    if (!merged.includes(id)) merged.push(id);
-  });
-  return merged;
 }
 
 type ManualContactPayload = {

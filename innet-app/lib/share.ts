@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { compressSync, decompressSync } from 'fflate';
 import {
   Contact,
   ContactGroup,
@@ -13,6 +14,7 @@ import { mapPrivacyLevel } from './privacy';
 export const SHARE_PREFIX = 'innet-share:';
 export const SHARE_VERSION = 1;
 export const MAX_SHARE_TOKEN_SIZE = 4096; // Soft threshold to keep QR-коды пригодными для сканирования
+const SHARE_TOKEN_COMPRESSED_PREFIX = 'c.';
 
 export interface ShareFact {
   id: string;
@@ -120,7 +122,22 @@ export function extractShareToken(value: string | null | undefined): string | nu
 
 export function generateShareToken(payload: SharePayload): string {
   const json = JSON.stringify(sanitizePayload(payload));
-  const token = SHARE_PREFIX + base64UrlEncode(json);
+  const encodedRaw = base64UrlEncode(json);
+
+  let tokenBody = encodedRaw;
+  try {
+    const compressed = compressSync(toUtf8Array(json), { level: 6 });
+    const encodedCompressed = `${SHARE_TOKEN_COMPRESSED_PREFIX}${base64UrlEncodeBytes(compressed)}`;
+    if (encodedCompressed.length < encodedRaw.length) {
+      tokenBody = encodedCompressed;
+    }
+  } catch (err) {
+    if (typeof console !== 'undefined') {
+      console.warn('Share token compression failed, falling back to plain payload.', err);
+    }
+  }
+
+  const token = SHARE_PREFIX + tokenBody;
   if (token.length > MAX_SHARE_TOKEN_SIZE && typeof console !== 'undefined') {
     console.warn(
       `Share token length ${token.length} превышает мягкий лимит ${MAX_SHARE_TOKEN_SIZE}. ` +
@@ -135,7 +152,19 @@ export function parseShareToken(token: string): SharePayload {
     throw new Error('Неподдерживаемый формат QR-кода.');
   }
   const encoded = token.slice(SHARE_PREFIX.length);
-  const json = base64UrlDecode(encoded);
+  let json: string;
+  if (encoded.startsWith(SHARE_TOKEN_COMPRESSED_PREFIX)) {
+    const compressed = encoded.slice(SHARE_TOKEN_COMPRESSED_PREFIX.length);
+    try {
+      const bytes = base64UrlDecodeToBytes(compressed);
+      const decompressed = decompressSync(bytes);
+      json = bytesToUtf8String(decompressed);
+    } catch {
+      throw new Error('Не удалось разобрать данные QR-кода.');
+    }
+  } else {
+    json = base64UrlDecode(encoded);
+  }
   const parsed = JSON.parse(json) as SharePayload;
   if (!parsed || typeof parsed !== 'object') {
     throw new Error('Не удалось разобрать данные QR-кода.');
@@ -319,16 +348,20 @@ function decodeCandidate(raw: string): string {
 }
 
 function base64UrlEncode(input: string): string {
+  const encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+  const bytes = encoder ? encoder.encode(input) : toUtf8Array(input);
+  return base64UrlEncodeBytes(bytes);
+}
+
+function base64UrlEncodeBytes(bytes: Uint8Array): string {
   if (typeof window === 'undefined') {
-    return Buffer.from(input, 'utf8')
+    return Buffer.from(bytes)
       .toString('base64')
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
       .replace(/=+$/g, '');
   }
 
-  const encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
-  const bytes = encoder ? encoder.encode(input) : toUtf8Array(input);
   let binary = '';
   const chunkSize = 0x8000;
   for (let i = 0; i < bytes.length; i += chunkSize) {
@@ -343,13 +376,22 @@ function base64UrlEncode(input: string): string {
 }
 
 function base64UrlDecode(input: string): string {
+  const bytes = base64UrlDecodeToBytes(input);
+  if (typeof TextDecoder !== 'undefined') {
+    return new TextDecoder().decode(bytes);
+  }
+  return utf8ArrayToString(bytes);
+}
+
+function base64UrlDecodeToBytes(input: string): Uint8Array {
   let normalized = input.replace(/-/g, '+').replace(/_/g, '/');
   while (normalized.length % 4) {
     normalized += '=';
   }
 
   if (typeof window === 'undefined') {
-    return Buffer.from(normalized, 'base64').toString('utf8');
+    const buffer = Buffer.from(normalized, 'base64');
+    return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
   }
 
   const binary = atob(normalized);
@@ -358,12 +400,7 @@ function base64UrlDecode(input: string): string {
   for (let i = 0; i < length; i += 1) {
     bytes[i] = binary.charCodeAt(i);
   }
-
-  if (typeof TextDecoder !== 'undefined') {
-    return new TextDecoder().decode(bytes);
-  }
-
-  return utf8ArrayToString(bytes);
+  return bytes;
 }
 
 function countFacts(groups: ShareGroup[]): number {
@@ -416,6 +453,12 @@ function toUtf8Array(str: string): Uint8Array {
   return new Uint8Array(utf8);
 }
 
+function bytesToUtf8String(bytes: Uint8Array): string {
+  if (typeof TextDecoder !== 'undefined') {
+    return new TextDecoder().decode(bytes);
+  }
+  return utf8ArrayToString(bytes);
+}
 function utf8ArrayToString(bytes: Uint8Array): string {
   let out = '';
   let i = 0;

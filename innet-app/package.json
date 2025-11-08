@@ -20,6 +20,7 @@
     "clsx": "^1.2.1",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "fflate": "^0.8.2",
     "framer-motion": "^10.12.16",
     "html5-qrcode": "^2.3.8",
     "jsonwebtoken": "^9.0.2",

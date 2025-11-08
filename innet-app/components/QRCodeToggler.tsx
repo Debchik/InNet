@@ -91,7 +91,16 @@ export default function QRCodeToggler() {
           qrAnimating ? "filter blur-sm opacity-70 scale-95" : "filter-none"
         )}
       >
-        <QRCode value={qrValue} fgColor="#0D9488" bgColor="transparent" style={{ width: 232, height: 232 }} />
+        <QRCode
+          value={qrValue}
+          fgColor="#0D9488"
+          bgColor="transparent"
+          level="L"
+          style={{
+            width: 'min(65vw, 280px)',
+            height: 'min(65vw, 280px)',
+          }}
+        />
       </div>
 
       <div className="mt-4 text-sm text-gray-300">Чем хотите поделиться сегодня?</div>

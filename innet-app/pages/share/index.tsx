@@ -3,16 +3,21 @@
 import { useRouter } from 'next/router';
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Layout from '../../components/Layout';
+import ToggleBar from '../../components/ToggleBar';
 import {
   extractShareToken,
+  getOrCreateProfileId,
   mergeContactFromShare,
   parseShareToken,
   ShareGroup,
   SharePayload,
+  SHARE_VERSION,
 } from '../../lib/share';
 import {
   convertFactsToGroups,
+  FactGroup,
   loadContacts,
+  loadFactGroups,
   loadUsers,
   saveFactGroups,
   saveUsers,
@@ -23,6 +28,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { usePlan } from '../../hooks/usePlan';
 import { DEFAULT_PLAN, isUnlimited } from '../../lib/plans';
 import { registerRemoteAccount } from '../../lib/accountRemote';
+import { loadShareProfile, ShareProfile, SHARE_PROFILE_STORAGE_KEYS } from '../../lib/shareProfile';
+import { usePrivacy } from '../../hooks/usePrivacy';
+import { groupToShare, syncSelection } from '../../lib/shareUtils';
+import { sendExchange } from '../../lib/exchangeClient';
 
 type PageStatus = 'loading' | 'ready' | 'adding' | 'added' | 'error';
 
@@ -51,7 +60,13 @@ export default function ShareLandingPage() {
   const [sharePayload, setSharePayload] = useState<SharePayload | null>(null);
   const [hasAccount, setHasAccount] = useState(false);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
+  const [profile, setProfile] = useState<ShareProfile>(loadShareProfile);
+  const [profileId, setProfileId] = useState('');
+  const [responseGroups, setResponseGroups] = useState<FactGroup[]>([]);
+  const [responseSelection, setResponseSelection] = useState<string[]>([]);
+  const [reciprocalError, setReciprocalError] = useState<string | null>(null);
   const { entitlements } = usePlan();
+  const { level: privacyLevel } = usePrivacy(entitlements);
   const contactLimitMessage = useMemo(() => {
     if (isUnlimited(entitlements.contactLimit)) return '';
     const limit = entitlements.contactLimit ?? 0;
@@ -60,6 +75,113 @@ export default function ShareLandingPage() {
     }
     return `В вашем тарифе доступно до ${limit} контактов первого круга. Удалите контакт или подключите InNet Pro для безлимита.`;
   }, [entitlements.contactLimit]);
+
+  useEffect(() => {
+    setProfile(loadShareProfile());
+    setProfileId(getOrCreateProfileId());
+    const groups = loadFactGroups();
+    setResponseGroups(groups);
+    setResponseSelection(groups.map((group) => group.id));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleStorage = (event: StorageEvent) => {
+      if (!event.key || event.key === 'innet_fact_groups') {
+        setResponseGroups(loadFactGroups());
+      }
+      if (!event.key || SHARE_PROFILE_STORAGE_KEYS.includes(event.key)) {
+        setProfile(loadShareProfile());
+      }
+    };
+    const handleProfileEvent = () => setProfile(loadShareProfile());
+
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('innet-profile-updated', handleProfileEvent as EventListener);
+    window.addEventListener('focus', handleProfileEvent as EventListener);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('innet-profile-updated', handleProfileEvent as EventListener);
+      window.removeEventListener('focus', handleProfileEvent as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    setResponseSelection((prev) => syncSelection(prev, responseGroups));
+  }, [responseGroups]);
+
+  useEffect(() => {
+    setReciprocalError(null);
+  }, [responseSelection]);
+
+  const handleResponseToggle = useCallback((groupId: string) => {
+    setResponseSelection((prev) =>
+      prev.includes(groupId) ? prev.filter((id) => id !== groupId) : [...prev, groupId]
+    );
+  }, []);
+
+  const selectedShareGroups = useMemo<ShareGroup[]>(() => {
+    return responseGroups
+      .filter((group) => responseSelection.includes(group.id))
+      .map(groupToShare);
+  }, [responseGroups, responseSelection]);
+
+  const selectedFactsCount = useMemo(
+    () => selectedShareGroups.reduce((acc, group) => acc + group.facts.length, 0),
+    [selectedShareGroups]
+  );
+
+  const ownerContact = useMemo(
+    () => ({
+      phone: privacyLevel === 'direct-only' ? undefined : profile.phone,
+      telegram: privacyLevel === 'direct-only' ? undefined : profile.telegram,
+      instagram: privacyLevel === 'direct-only' ? undefined : profile.instagram,
+    }),
+    [privacyLevel, profile.instagram, profile.phone, profile.telegram]
+  );
+
+  const shareChannels = useMemo(() => {
+    const channels: string[] = [];
+    if (ownerContact.phone) channels.push('телефон');
+    if (ownerContact.telegram) channels.push('Telegram');
+    if (ownerContact.instagram) channels.push('Instagram');
+    return channels;
+  }, [ownerContact]);
+
+  const sendReciprocalShare = useCallback(
+    async (targetProfileId?: string) => {
+      if (!targetProfileId || !profileId || selectedShareGroups.length === 0) {
+        setReciprocalError(null);
+        return;
+      }
+      try {
+        const payload: SharePayload = {
+          v: SHARE_VERSION,
+          owner: {
+            id: profileId,
+            name: profile.name || 'Без имени',
+            avatar: profile.avatar,
+            phone: ownerContact.phone,
+            telegram: ownerContact.telegram,
+            instagram: ownerContact.instagram,
+          },
+          groups: selectedShareGroups,
+          generatedAt: Date.now(),
+          privacy: privacyLevel,
+        };
+        const response = await sendExchange(profileId, targetProfileId, payload);
+        if (!response.ok) {
+          throw new Error(response.message);
+        }
+        setReciprocalError(null);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Не удалось отправить факты в ответ.';
+        setReciprocalError(message);
+      }
+    },
+    [ownerContact, privacyLevel, profile.avatar, profile.name, profileId, selectedShareGroups]
+  );
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -181,6 +303,7 @@ export default function ShareLandingPage() {
           ownerId: sharePayload.owner?.id,
           ownerName: sharePayload.owner?.name,
         });
+        await sendReciprocalShare(sharePayload.owner?.id);
         redirectToContact(result.contact.id);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Не удалось добавить контакт.';
@@ -188,7 +311,14 @@ export default function ShareLandingPage() {
         setStatus('error');
       }
     },
-    [contactLimitMessage, entitlements.contactLimit, handleRecordEngagement, redirectToContact, sharePayload]
+    [
+      contactLimitMessage,
+      entitlements.contactLimit,
+      handleRecordEngagement,
+      redirectToContact,
+      sendReciprocalShare,
+      sharePayload,
+    ]
   );
 
   const handleAddForExisting = useCallback(async () => {
@@ -308,6 +438,16 @@ export default function ShareLandingPage() {
         {sharePayload && status !== 'loading' && status !== 'error' && (
           <div className="space-y-8">
             <ShareSummary payload={sharePayload} groups={groups} />
+            <ReciprocalSharePanel
+              groups={responseGroups}
+              selection={responseSelection}
+              onToggle={handleResponseToggle}
+              selectedGroups={selectedShareGroups.length}
+              selectedFacts={selectedFactsCount}
+              profile={profile}
+              channels={shareChannels}
+              error={reciprocalError}
+            />
 
             {progressMessage && (
               <StatusBlock
@@ -401,6 +541,9 @@ function QuickSignupForm({
         >
           Создать аккаунт и добавить контакт
         </button>
+        <p className="text-xs text-slate-500">
+          Отмеченные выше группы фактов отправятся в ответ автоматически.
+        </p>
       </form>
     </section>
   );
@@ -427,6 +570,9 @@ function ExistingAccountCTA({
       >
         Добавить контакт в мою сеть
       </button>
+      <p className="mt-2 text-xs text-slate-500">
+        Факты, которые вы отметили выше, отправятся в ответ автоматически.
+      </p>
     </section>
   );
 }
@@ -486,6 +632,109 @@ function ShareSummary({ payload, groups }: { payload: SharePayload; groups: Shar
         </div>
       )}
     </section>
+  );
+}
+
+type ReciprocalSharePanelProps = {
+  groups: FactGroup[];
+  selection: string[];
+  onToggle: (id: string) => void;
+  selectedGroups: number;
+  selectedFacts: number;
+  profile: ShareProfile;
+  channels: string[];
+  error: string | null;
+};
+
+function ReciprocalSharePanel({
+  groups,
+  selection,
+  onToggle,
+  selectedGroups,
+  selectedFacts,
+  profile,
+  channels,
+  error,
+}: ReciprocalSharePanelProps) {
+  const summary =
+    selectedGroups > 0
+      ? `Готовы поделиться ${selectedGroups} группами и ${selectedFacts} фактами.`
+      : 'Вы пока не выбрали ни одной группы для ответа.';
+
+  return (
+    <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-6 shadow-lg">
+      <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-100">Чем поделитесь в ответ</h2>
+          <p className="mt-1 text-sm text-slate-400">
+            Отметьте группы ниже — мы отправим их владельцу QR-кода сразу после нажатия «Добавить контакт».
+          </p>
+          <p className="mt-2 text-xs text-slate-500">{summary}</p>
+          {channels.length > 0 && (
+            <p className="mt-1 text-xs text-slate-500">Контакты в ответ: {channels.join(', ')}.</p>
+          )}
+          {error && <p className="mt-2 text-xs text-red-400">Ответ не отправлен: {error}</p>}
+        </div>
+        <ProfilePreview profile={profile} />
+      </header>
+
+      <div className="mt-6">
+        {groups.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-700 px-4 py-5 text-sm text-slate-500">
+            У вас пока нет групп фактов. Откройте приложение InNet и создайте подборки в разделе «Факты», чтобы обмениваться ими.
+          </div>
+        ) : (
+          <ul className="space-y-3">
+            {groups.map((group) => {
+              const active = selection.includes(group.id);
+              return (
+                <li
+                  key={group.id}
+                  className="flex items-center justify-between rounded-xl bg-slate-900/70 px-4 py-3"
+                >
+                  <div>
+                    <p
+                      className="font-medium text-slate-100"
+                      style={{ color: active ? group.color : undefined }}
+                    >
+                      {group.name}
+                    </p>
+                    <p className="text-xs text-slate-400">Фактов: {group.facts.length}</p>
+                  </div>
+                  <ToggleBar active={active} onToggle={() => onToggle(group.id)} accentColor={group.color} />
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ProfilePreview({ profile }: { profile: ShareProfile }) {
+  const hasContacts = profile.phone || profile.telegram || profile.instagram;
+  return (
+    <div className="flex w-full items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-3 md:w-auto">
+      <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-slate-800 text-lg font-semibold text-slate-100">
+        {profile.avatar ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={profile.avatar} alt={profile.name} className="h-full w-full object-cover" />
+        ) : (
+          (profile.name || 'Вы').charAt(0).toUpperCase()
+        )}
+      </div>
+      <div>
+        <p className="text-sm font-semibold text-slate-100">{profile.name || 'Вы'}</p>
+        {hasContacts && (
+          <div className="mt-1 space-y-0.5 text-xs text-slate-400">
+            {profile.phone && <p>Телефон: {profile.phone}</p>}
+            {profile.telegram && <p>Telegram: {profile.telegram}</p>}
+            {profile.instagram && <p>Instagram: {profile.instagram}</p>}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
