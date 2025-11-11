@@ -391,7 +391,7 @@ export default function ContactDetail() {
             <h2 className="text-xl font-semibold text-slate-100">Теги контакта</h2>
             {!allowCustomTags && (
               <p className="text-xs text-slate-500">
-                Доступно в InNet Pro: отмечайте людей как «семья», «друг», «коллега» и подсвечивайте их цветом.
+                Скоро откроем за токены: отмечайте людей как «семья», «друг», «коллега» и подсвечивайте их цветом.
               </p>
             )}
           </div>
@@ -399,7 +399,7 @@ export default function ContactDetail() {
             <p className="mt-3 text-sm text-slate-400">
               {allowCustomTags
                 ? 'Добавьте первый тег, чтобы выделить роль этого контакта.'
-                : 'Теги появятся после подключения подписки Pro.'}
+                : 'Теги появятся после включения платного расширения токенами.'}
             </p>
           ) : (
             <div className="mt-3 flex flex-wrap gap-2">
@@ -527,14 +527,14 @@ export default function ContactDetail() {
           <section className="mt-6 rounded-xl border border-slate-800 bg-slate-900/70 p-5">
             <h2 className="text-xl font-semibold text-slate-100">ИИ-помощник</h2>
             <p className="mt-2 text-sm text-slate-400">
-              ИИ-подсказки доступны в подписке InNet Pro. Получайте персональные идеи для сообщений и
-              встреч в один клик.
+              ИИ-подсказки появятся как отдельный пакет токенов. Получайте персональные идеи для сообщений и
+              встреч — скоро откроем ранний доступ.
             </p>
             <Link
               href="/app/upgrade"
               className="mt-4 inline-flex items-center justify-center rounded-full bg-primary px-4 py-2 text-xs font-semibold text-slate-900 transition hover:bg-secondary"
             >
-              Оформить InNet Pro
+              Открыть кошелёк токенов
             </Link>
           </section>
         )}

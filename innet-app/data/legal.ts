@@ -1,3 +1,12 @@
+import { PLAN_ENTITLEMENTS } from '../lib/plans';
+import {
+  TOKEN_PACKS,
+  TOKEN_ACTIONS_LIST,
+  getTokenActionMeta,
+  formatTokenPrice,
+  type TokenPack,
+} from '../lib/tokens';
+
 export type TariffPlan = {
   id: string;
   name: string;
@@ -10,67 +19,90 @@ export type TariffPlan = {
   note?: string;
 };
 
+const FREE_CONTACT_LIMIT = PLAN_ENTITLEMENTS.free.contactLimit ?? 0;
+const FREE_FACT_GROUP_LIMIT = PLAN_ENTITLEMENTS.free.factGroupLimit ?? 0;
+const FREE_FACTS_PER_GROUP = PLAN_ENTITLEMENTS.free.factsPerGroupLimit ?? 0;
+
+const EXTRA_CONTACT_RULE = getTokenActionMeta('extra-contact');
+const EXTRA_FACT_GROUP_RULE = getTokenActionMeta('extra-fact-group');
+const EXTRA_FACT_RULE = getTokenActionMeta('extra-fact');
+
+function buildPackFeatures(pack: TokenPack): string[] {
+  const totalTokens = pack.tokens + pack.bonusTokens;
+  const approxContacts =
+    EXTRA_CONTACT_RULE.tokens > 0 ? Math.floor(totalTokens / EXTRA_CONTACT_RULE.tokens) : totalTokens;
+  const bonusLabel = pack.bonusTokens > 0 ? `+${pack.bonusTokens} бонусов` : 'без бонусов';
+  return [
+    `${totalTokens} токенов (${bonusLabel}) поступают мгновенно на баланс`,
+    `≈${approxContacts} новых контактов сверх лимита (по ${EXTRA_CONTACT_RULE.tokens} токена за контакт)`,
+    `Новая группа фактов стоит ${EXTRA_FACT_GROUP_RULE.tokens} токенов`,
+    `Новый факт сверх лимита в группе — ${EXTRA_FACT_RULE.tokens} токен`,
+  ];
+}
+
+const tokenPlanCards: TariffPlan[] = TOKEN_PACKS.map((pack) => {
+  const totalTokens = pack.tokens + pack.bonusTokens;
+  return {
+    id: pack.id,
+    name: pack.name,
+    description: pack.description,
+    price: `${pack.priceRub} ₽`,
+    billingPeriod: 'разовая покупка',
+    features: buildPackFeatures(pack),
+    cta: `Пополнить ${totalTokens} токенов`,
+    badge: pack.bestFor,
+    note: formatTokenPrice(pack.priceRub, totalTokens),
+  };
+});
+
+const freePlan: TariffPlan = {
+  id: 'free',
+  name: 'InNet Start',
+  description: 'Проверяйте гипотезы бесплатно: у вас всегда есть 20 контактов и 3 набора фактов.',
+  price: '0 ₽',
+  billingPeriod: 'навсегда',
+  features: [
+    `${FREE_CONTACT_LIMIT} контактов первого круга входят в бесплатную квоту`,
+    `${FREE_FACT_GROUP_LIMIT} набора фактов + по ${FREE_FACTS_PER_GROUP} заметок в каждом`,
+    'Динамический QR и ручное добавление заметок без ограничений',
+    'Можно докупать токены и масштабироваться без подписки',
+  ],
+  cta: 'Создать профиль бесплатно',
+};
+
 /**
  * Тарифная сетка, которая отображается на лендинге и в юридических документах.
  * Значения по умолчанию можно безопасно заменить на актуальные перед публикацией.
  */
-export const tariffPlans: TariffPlan[] = [
-  {
-    id: 'free',
-    name: 'InNet Start',
-    description: 'Идеальный вход: премиальная цифровая визитка, динамический QR и базовые напоминания — бесплатно.',
-    price: '0 ₽',
-    billingPeriod: 'навсегда',
-    features: [
-      'До 40 контактов первого круга — хватит, чтобы проверить гипотезы',
-      '3 набора фактов для друзей, клиентов и инвесторов',
-      'Динамический QR обновляется без перепечатки и ссылок',
-      'Напоминания о тёплых касаниях, чтобы диалог не угасал',
-    ],
-    cta: 'Забрать бесплатный доступ',
+export const tariffPlans: TariffPlan[] = [freePlan, ...tokenPlanCards];
+
+export const tokenEconomyExplainer = {
+  title: 'Экономика токенов InNet',
+  freeAllowance: {
+    contacts: FREE_CONTACT_LIMIT,
+    factGroups: FREE_FACT_GROUP_LIMIT,
+    factsPerGroup: FREE_FACTS_PER_GROUP,
   },
-  {
-    id: 'pro-monthly',
-    name: 'InNet Pro — месяц',
-    description: 'Про-режим на каждый день: безлимит, ИИ-подсказки и приватность для тех, кто знакомится много.',
-    price: '299 ₽',
-    billingPeriod: 'в месяц',
-    features: [
-      '30 дней бесплатно — нужна лишь карта для активации',
-      'Безлимитные контакты, факт-группы и персональные заметки',
-      'ИИ предлагает первые сообщения и темы встреч',
-      'Синхронизация и резервные копии между всеми устройствами',
-      'Цветные теги и фильтры для идеального порядка в сети',
-    ],
-    cta: 'Запустить бесплатный месяц',
-    note: 'После 30 дней — 299 ₽/мес. Отмена одним нажатием в личном кабинете.',
-  },
-  {
-    id: 'pro-annual',
-    name: 'InNet Pro — год',
-    description: 'Год InNet Pro со скидкой 40%: платите один раз и пользуетесь премиум-инструментами без ограничений.',
-    price: '1 990 ₽',
-    billingPeriod: 'в год (≈166 ₽ в месяц)',
-    features: [
-      'Экономия 40% по сравнению с помесячной оплатой',
-      'Весь функционал Pro + доступ ко всем будущим релизам',
-      'ИИ-сценарии тёплых касаний и автозаметки',
-      'Синхронизация, резервное копирование и приоритетная поддержка',
-      'VIP-роль в тестировании новых функций',
-    ],
-    cta: 'Взять год со скидкой',
-    badge: 'Лучший выбор для профи',
-    note: 'Оплата один раз за 12 месяцев. Средняя цена 166 ₽ в месяц, отменить можно за минуту до продления.',
-  },
-];
+  actions: TOKEN_ACTIONS_LIST.map((action) => ({
+    label: action.label,
+    tokens: action.tokens,
+    approxRub: action.approxRub,
+    description: action.description,
+  })),
+  notes: [
+    'Токены списываются автоматически при действиях сверх бесплатных лимитов.',
+    'Баланс хранится локально и синхронизируется вместе с остальными данными.',
+    'В следующем релизе подключим YooKassa, пока используем заглушку и тестовые значения.',
+  ],
+};
 
 export const digitalDeliveryInfo = {
   title: 'Как вы получаете доступ',
   items: [
-    'Сервис полностью цифровой: после оплаты аккаунт мгновенно переключается на выбранный тариф.',
-    'Доступ появляется сразу — просто обновите страницу или войдите в личный кабинет заново.',
-    'На почту приходит чек и подтверждение активации тарифа, чтобы сохранить документы.',
-    'Автопродление отключается в один клик в личном кабинете без писем в поддержку.',
+    'Сервис полностью цифровой: после покупки токенов мы мгновенно пополняем баланс и показываем уведомление.',
+    'Доступ к новым действиям появляется сразу — перезагружать страницу не нужно.',
+    'Чеки и документы придут на почту после подключения настоящего эквайринга (сейчас демо-режим).',
+    'Автопродлений нет: покупаете токены по мере необходимости и тратите их в своём темпе.',
   ],
 };
 
@@ -84,11 +116,11 @@ export const legalContactInfo = {
 
 export const publicOfferMeta = {
   documentTitle: 'Публичная оферта на использование сервиса InNet',
-  lastUpdated: '01.09.2025',
+  lastUpdated: '15.03.2026',
 };
 
 export const companyDescription = {
   brandName: 'InNet',
   shortAbout:
-    'InNet делает нетворкинг таким же системным, как CRM: вы создаёте вау-эффект одним QR, прогреваете контакты и не даёте важным связям остыть.',
+    'InNet делает нетворкинг таким же системным, как CRM: платите токенами только за рост базы и держите нужные связи тёплыми.',
 };

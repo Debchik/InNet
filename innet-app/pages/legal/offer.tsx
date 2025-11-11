@@ -5,6 +5,7 @@ import {
   legalContactInfo,
   publicOfferMeta,
   tariffPlans,
+  tokenEconomyExplainer,
 } from '../../data/legal';
 import { seoConfig } from '../../lib/seo';
 
@@ -66,9 +67,11 @@ export default function PublicOfferPage() {
           <section className="space-y-4">
             <h2 className="text-2xl font-semibold text-white">2. Предмет договора</h2>
             <p className="text-sm text-gray-300">
-              Исполнитель предоставляет Пользователю доступ к функционалу сервиса в соответствии с выбранным тарифным планом.
-              Услуги оказываются дистанционно в электронном виде посредством личного кабинета на сайте. Результат услуги —
-              предоставление инструментов для ведения базы контактов, обмена фактами и получения напоминаний.
+              Исполнитель предоставляет Пользователю доступ к функционалу сервиса в соответствии с выбранным тарифным планом и
+              пакетом токенов. Модель оплаты — pay as you go: базовая квота (20 контактов, 3 группы фактов и 5 фактов в каждой)
+              предоставляется бесплатно, а действия сверх квоты оплачиваются токенами. Услуги оказываются дистанционно в
+              электронном виде посредством личного кабинета на сайте. Результат услуги — инструменты для ведения базы контактов,
+              обмена фактами и напоминаний о взаимодействиях.
             </p>
             <div className="rounded-xl border border-gray-700 bg-gray-800/60 p-6">
               <h3 className="text-lg font-semibold text-white mb-4">Актуальные тарифы</h3>
@@ -93,13 +96,26 @@ export default function PublicOfferPage() {
                   </div>
                 ))}
               </div>
+              <div className="mt-6 rounded-lg border border-gray-700/70 bg-gray-900/50 p-4">
+                <h4 className="text-base font-semibold text-white mb-3">Стоимость действий</h4>
+                <ul className="space-y-2 text-sm text-gray-200">
+                  {tokenEconomyExplainer.actions.map((action) => (
+                    <li key={action.label} className="flex gap-2">
+                      <span className="mt-1 h-2 w-2 rounded-full bg-primary" />
+                      <span>
+                        {action.label}: {action.tokens} токена (≈{action.approxRub} ₽). {action.description}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           </section>
 
           <section className="space-y-4">
             <h2 className="text-2xl font-semibold text-white">3. Порядок предоставления доступа</h2>
             <p className="text-sm text-gray-300">
-              После успешной оплаты система автоматически активирует выбранный тариф в пределах оплаченного срока. Доступ
+              После успешной оплаты система автоматически пополняет баланс токенов и включает выбранные функции. Доступ
               предоставляется сразу, подтверждение направляется на электронную почту пользователя. Для входа используется
               логин и пароль, указанные при регистрации.
             </p>
@@ -114,11 +130,11 @@ export default function PublicOfferPage() {
           </section>
 
           <section className="space-y-4">
-            <h2 className="text-2xl font-semibold text-white">4. Оплата и продление</h2>
+            <h2 className="text-2xl font-semibold text-white">4. Оплата и пополнение токенов</h2>
             <p className="text-sm text-gray-300">
-              Оплата производится банковской картой, через СБП или иные доступные на сайте способы. Тариф InNet Pro оформляется
-              в формате подписки с ежемесячным или годовым продлением. Автопродление можно отключить в личном кабинете перед
-              очередным списанием. С момента аннулирования подписки доступ сохраняется до конца оплаченного периода.
+              Оплата производится банковской картой, через СБП или иные доступные на сайте способы. Пользователь приобретает
+              разовые пакеты токенов, которые зачисляются на баланс сразу после подтверждения платежа. Автопродлений нет —
+              списания происходят только по инициативе Пользователя при покупке очередного пакета.
             </p>
           </section>
 
@@ -126,7 +142,7 @@ export default function PublicOfferPage() {
             <h2 className="text-2xl font-semibold text-white">5. Возврат средств</h2>
             <p className="text-sm text-gray-300">
               Если услуга не подошла, Пользователь вправе запросить возврат в течение 14 календарных дней после оплаты при
-              условии, что не было значительного использования функций сервиса. Заявка направляется на{' '}
+              условии, что из приобретённого пакета израсходовано не более 10% токенов. Заявка направляется на{' '}
               <a href={`mailto:${legalContactInfo.supportEmail}`} className="text-primary hover:underline">
                 {legalContactInfo.supportEmail}
               </a>{' '}
@@ -137,7 +153,7 @@ export default function PublicOfferPage() {
           <section className="space-y-4">
             <h2 className="text-2xl font-semibold text-white">6. Претензии и обратная связь</h2>
             <p className="text-sm text-gray-300">
-              Все обращения по качеству услуг, ошибочным списаниям или вопросам подписки направляйте на{' '}
+              Все обращения по качеству услуг, ошибочным списаниям или вопросам пополнения токенов направляйте на{' '}
               <a href={`mailto:${legalContactInfo.supportEmail}`} className="text-primary hover:underline">
                 {legalContactInfo.supportEmail}
               </a>{' '}

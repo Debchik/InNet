@@ -33,6 +33,7 @@ import { usePrivacy } from '../../hooks/usePrivacy';
 import { groupToShare, syncSelection } from '../../lib/shareUtils';
 import { sendExchange } from '../../lib/exchangeClient';
 import { resolveAliasToken } from '../../lib/shareAliasClient';
+import { spendTokensForAction } from '../../lib/tokens';
 
 type PageStatus = 'loading' | 'ready' | 'adding' | 'added' | 'error';
 
@@ -68,15 +69,6 @@ export default function ShareLandingPage() {
   const [reciprocalError, setReciprocalError] = useState<string | null>(null);
   const { entitlements } = usePlan();
   const { level: privacyLevel } = usePrivacy(entitlements);
-  const contactLimitMessage = useMemo(() => {
-    if (isUnlimited(entitlements.contactLimit)) return '';
-    const limit = entitlements.contactLimit ?? 0;
-    if (limit <= 0) {
-      return 'Лимит контактов для текущего тарифа исчерпан.';
-    }
-    return `В вашем тарифе доступно до ${limit} контактов первого круга. Удалите контакт или подключите InNet Pro для безлимита.`;
-  }, [entitlements.contactLimit]);
-
   useEffect(() => {
     setProfile(loadShareProfile());
     setProfileId(getOrCreateProfileId());
@@ -300,18 +292,24 @@ export default function ShareLandingPage() {
       try {
         const existingContacts = loadContacts();
         const remoteId = sharePayload.owner?.id;
-        if (
-          !isUnlimited(entitlements.contactLimit) &&
-          (entitlements.contactLimit ?? 0) > 0
-        ) {
+        if (!isUnlimited(entitlements.contactLimit)) {
+          const limit = entitlements.contactLimit ?? 0;
           const alreadyExists = remoteId
             ? existingContacts.some((contact) => contact.remoteId === remoteId)
             : false;
-          if (!alreadyExists && existingContacts.length >= (entitlements.contactLimit ?? 0)) {
-            setProgressMessage(null);
-            setStatus('ready');
-            setError(contactLimitMessage);
-            return;
+          if (limit > 0 && !alreadyExists && existingContacts.length >= limit) {
+            const charge = spendTokensForAction('extra-contact');
+            if (!charge.ok) {
+              setProgressMessage(null);
+              setStatus('ready');
+              setError(
+                `Недостаточно токенов. Нужно ${charge.cost}, на балансе ${charge.balance}. Пополните баланс во вкладке «Токены».`
+              );
+              return;
+            }
+            setProgressMessage(
+              `Списано ${charge.cost} токена(ов) за дополнительный контакт. Баланс: ${charge.balance} токенов.`
+            );
           }
         }
         const result = mergeContactFromShare(sharePayload);
@@ -332,14 +330,7 @@ export default function ShareLandingPage() {
         setStatus('error');
       }
     },
-    [
-      contactLimitMessage,
-      entitlements.contactLimit,
-      handleRecordEngagement,
-      redirectToContact,
-      sendReciprocalShare,
-      sharePayload,
-    ]
+    [entitlements.contactLimit, handleRecordEngagement, redirectToContact, sendReciprocalShare, sharePayload]
   );
 
   const handleAddForExisting = useCallback(async () => {

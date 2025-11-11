@@ -52,8 +52,9 @@ After these steps:
 
 ### `user_accounts`
 
-Persists authenticated users, their profile metadata and subscription state so the
-browser can be wiped without losing access.
+Persists authenticated users, их профиль и план по умолчанию (`free`). Переход на модель
+pay-as-you-go не отменяет таблицу: мы по-прежнему храним идентификаторы пользователей,
+чтобы можно было синхронизировать данные между устройствами.
 
 ```sql
 create table if not exists public.user_accounts (
@@ -77,10 +78,14 @@ Recommended indexes and policies:
 - If you use Supabase RLS, allow the service role to select/insert/update rows
   (`auth.role() = 'service_role'`). No other roles should have direct access.
 
-The `data` column stores the serialized `UserAccount` object without the password. It now also carries
-the optional subscription metadata (`planProduct`, `planExpiresAt`). We do not maintain separate
-columns for these fields; `plan_expires_at` is only present inside the JSON payload and is `null`
-unless the payment metadata explicitly specifies a trial period.
+Notes:
+
+- The `plan` column остаётся для обратной совместимости. Сейчас все пользователи находятся
+  на `free`, а токены списываются локально. После подключения YooKassa потребуется добавить
+  `token_balance integer not null default 0` и синхронизировать пополнения из вебхуков.
+- `data` содержит сериализованный `UserAccount` без пароля. Раньше мы добавляли туда
+  `planProduct`/`planExpiresAt`; поля можно оставить (они не используются), чтобы не ломать
+  старые клиенты.
 
 ### `fact_collections`
 

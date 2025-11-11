@@ -2,8 +2,13 @@ import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import Layout from '../components/Layout';
 import QRCodeToggler from '../components/QRCodeToggler';
-import { ctaSlogans } from '../utils/slogans';
-import { companyDescription, digitalDeliveryInfo, legalContactInfo, tariffPlans } from '../data/legal';
+import {
+  companyDescription,
+  digitalDeliveryInfo,
+  legalContactInfo,
+  tariffPlans,
+  tokenEconomyExplainer,
+} from '../data/legal';
 import { seoConfig } from '../lib/seo';
 import type { SchemaEntity, SeoHeadProps } from '../components/SeoHead';
 
@@ -54,25 +59,20 @@ const HOMEPAGE_SEO: SeoHeadProps = {
   structuredData: HOMEPAGE_STRUCTURED_DATA,
 };
 
+const HERO_CTA = 'Создать свой QR';
+
 /**
  * Landing page for InNet. This page introduces the project, displays
  * a dynamic QR code teaser and explains how the application works.  
  * Each block ends with a call-to-action inviting users to register.
  */
 export default function Home() {
-  const [cta, setCta] = useState(ctaSlogans[0]);
-
   // Анимация динамического текста
   const phrases = HERO_PHRASES;
   const [phraseIndex, setPhraseIndex] = useState(0);
   const [displayed, setDisplayed] = useState('');
   const [phase, setPhase] = useState<'typing' | 'pausing' | 'erasing'>('typing');
   const prevPhraseRef = useRef<string>(phrases[0]);
-
-  useEffect(() => {
-    setCta(ctaSlogans[Math.floor(Math.random() * ctaSlogans.length)]);
-  }, []);
-
 
   // Основная анимация текста (печать/стирание/пауза)
   useEffect(() => {
@@ -139,13 +139,66 @@ export default function Home() {
             href="/register"
             className="inline-block rounded-md bg-primary px-6 py-3 text-lg font-semibold text-background shadow transition-colors hover:bg-secondary"
           >
-            {cta}
+            {HERO_CTA}
           </Link>
         </div>
         <div className="flex justify-center md:justify-end">
           <QRCodeToggler />
         </div>
       </div>
+      </section>
+
+      <section className="px-4 py-16 bg-background">
+        <div className="max-w-5xl mx-auto grid gap-10 lg:grid-cols-2">
+          <div className="rounded-2xl border border-gray-800 bg-gray-900/70 p-6 shadow-lg">
+            <h3 className="text-2xl font-semibold mb-2">{tokenEconomyExplainer.title}</h3>
+            <p className="text-sm text-gray-400 mb-6">
+              База растёт — списываются токены. Не растёт — баланс лежит и ждёт следующего ивента.
+            </p>
+            <div className="grid grid-cols-3 gap-3 mb-6 text-center">
+              <div className="rounded-xl border border-gray-800 bg-gray-950/60 px-3 py-4">
+                <p className="text-3xl font-bold text-primary">{tokenEconomyExplainer.freeAllowance.contacts}</p>
+                <p className="text-xs text-gray-400 mt-1">контактов бесплатно</p>
+              </div>
+              <div className="rounded-xl border border-gray-800 bg-gray-950/60 px-3 py-4">
+                <p className="text-3xl font-bold text-primary">{tokenEconomyExplainer.freeAllowance.factGroups}</p>
+                <p className="text-xs text-gray-400 mt-1">набора фактов</p>
+              </div>
+              <div className="rounded-xl border border-gray-800 bg-gray-950/60 px-3 py-4">
+                <p className="text-3xl font-bold text-primary">{tokenEconomyExplainer.freeAllowance.factsPerGroup}</p>
+                <p className="text-xs text-gray-400 mt-1">фактов в каждом</p>
+              </div>
+            </div>
+            <ul className="space-y-2 text-sm text-gray-300">
+              {tokenEconomyExplainer.notes.map((note) => (
+                <li key={note} className="flex gap-2">
+                  <span className="mt-1 h-1.5 w-1.5 rounded-full bg-primary" />
+                  <span>{note}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="rounded-2xl border border-gray-800 bg-gray-900/70 p-6 shadow-lg">
+            <h3 className="text-2xl font-semibold mb-2">Сколько стоит действие</h3>
+            <p className="text-sm text-gray-400 mb-4">Цены указаны в токенах — рублёвый эквивалент показываем для наглядности.</p>
+            <div className="space-y-4">
+              {tokenEconomyExplainer.actions.map((action) => (
+                <div key={action.label} className="rounded-xl border border-gray-800 bg-gray-950/60 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-base font-semibold text-white">{action.label}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">{action.description}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-2xl font-bold text-primary">{action.tokens}</p>
+                      <p className="text-xs text-gray-500">{action.approxRub} ₽</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* How It Works Section */}
@@ -158,7 +211,7 @@ export default function Home() {
             <h3 className="text-xl font-semibold mb-2">Собери историю, которая цепляет</h3>
             <p className="text-sm text-gray-300 mb-4">Разбей себя на группы фактов: достижения, личные триггеры, ссылки и инсайды. Показывай конкретному человеку только то, что усиливает доверие.</p>
             <Link href="/register" className="mt-auto bg-primary text-background px-4 py-2 rounded-md text-sm font-medium hover:bg-secondary transition-colors">
-              Собрать факты
+              Собрать историю о себе
             </Link>
           </div>
           {/* Step 2 */}
@@ -167,7 +220,7 @@ export default function Home() {
             <h3 className="text-xl font-semibold mb-2">Создай продающий QR</h3>
             <p className="text-sm text-gray-300 mb-4">В один тап собираешь динамический QR с актуальными данными, оффером и тонной контекста. Он выглядит премиально, обновляется мгновенно и работает на любом экране.</p>
             <Link href="/register" className="mt-auto bg-primary text-background px-4 py-2 rounded-md text-sm font-medium hover:bg-secondary transition-colors">
-              Сделать свой QR
+              Оформить QR-страницу
             </Link>
           </div>
           {/* Step 3 */}
@@ -176,7 +229,7 @@ export default function Home() {
             <h3 className="text-xl font-semibold mb-2">Расширяй тёплую сеть</h3>
             <p className="text-sm text-gray-300 mb-4">Сканируй чужие коды, сохраняй заметки и ставь напоминания. InNet помогает вовремя писать, перезапускать диалог и превращать знакомства в сделки, друзей или партнёрства.</p>
             <Link href="/register" className="mt-auto bg-primary text-background px-4 py-2 rounded-md text-sm font-medium hover:bg-secondary transition-colors">
-              Запустить рост сети
+              Расширить свою сеть
             </Link>
           </div>
         </div>
@@ -191,7 +244,7 @@ export default function Home() {
               Сканируя чужой QR, вы видите, чем человек готов поделиться прямо сейчас. Выбираете факты в ответ, добавляете заметку, и контакт сохраняется вместе с планом тёплого касания. Ни один интересный знакомый больше не потеряется.
             </p>
             <Link href="/register" className="bg-primary text-background px-6 py-3 rounded-md text-base font-semibold hover:bg-secondary transition-colors">
-              Попробовать вживую
+              Посмотреть, как это работает
             </Link>
           </div>
           {/* ...блок предпросмотра сканирования и картинка удалены по запросу... */}
@@ -201,9 +254,9 @@ export default function Home() {
       {/* Pricing Section */}
       <section className="px-4 py-16 bg-gray-900/60">
         <div className="max-w-5xl mx-auto">
-          <h2 className="text-3xl font-bold text-center mb-4">Тарифы, которые окупаются с первой встречи</h2>
+          <h2 className="text-3xl font-bold text-center mb-4">Платите только за рост</h2>
           <p className="text-gray-300 text-center max-w-3xl mx-auto mb-10">
-            {companyDescription.shortAbout} Выберите режим под себя: начните бесплатно, а за расширенной автоматикой и бесконечным нетворкингом приходите в InNet Pro.
+            {companyDescription.shortAbout} Бесплатно ведите до 20 контактов, а дальше пополняйте баланс токенами — каждый следующий пакет выгоднее предыдущего.
           </p>
           <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
             {tariffPlans.map((plan) => (
@@ -242,7 +295,7 @@ export default function Home() {
                   </p>
                 )}
                 <Link
-                  href={plan.id === 'free' ? '/register' : `/register?plan=${encodeURIComponent(plan.id)}`}
+                  href={plan.id === 'free' ? '/register' : '/register?intent=tokens'}
                   className="mt-auto inline-flex items-center justify-center rounded-md bg-primary px-5 py-3 text-sm font-semibold text-background transition hover:bg-secondary"
                 >
                   {plan.cta}
@@ -258,7 +311,7 @@ export default function Home() {
         <div className="max-w-4xl mx-auto bg-gray-800/70 border border-gray-700 rounded-2xl p-8 shadow">
           <h2 className="text-2xl font-bold mb-4">Как мы включаем доступ</h2>
           <p className="text-gray-300 mb-6">
-            InNet — полностью цифровой сервис. После регистрации вы попадаете в личный кабинет, а оплата мгновенно открывает нужный тариф без звонков и ожидания менеджера.
+            InNet — полностью цифровой сервис. После регистрации вы попадаете в личный кабинет, а покупка токенов мгновенно пополняет баланс: можно продолжать нетворк, не ожидая менеджеров и счетов.
           </p>
           <ul className="space-y-3 text-sm text-gray-200">
             {digitalDeliveryInfo.items.map((item) => (

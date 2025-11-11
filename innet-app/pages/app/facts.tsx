@@ -16,6 +16,7 @@ import { fetchRemoteFacts, upsertRemoteFacts } from '../../lib/factsRemote';
 import { getOrCreateProfileId } from '../../lib/share';
 import { usePlan } from '../../hooks/usePlan';
 import { isUnlimited } from '../../lib/plans';
+import { getTokenActionMeta, spendTokensForAction } from '../../lib/tokens';
 
 const FACT_SYNC_STORAGE_KEY = 'innet_fact_sync_enabled';
 const COLOR_OPTIONS = [
@@ -27,6 +28,7 @@ const COLOR_OPTIONS = [
 ] as const;
 
 const GROUP_NAME_LIMIT = 30;
+const EXTRA_FACT_RULE = getTokenActionMeta('extra-fact');
 
 type FocusRequest = { groupId: string; factId: string } | null;
 type HoldTarget =
@@ -64,7 +66,7 @@ const [isFinePointer, setIsFinePointer] = useState(false);
     if (isUnlimited(factsPerGroupLimit)) {
       return '';
     }
-    return 'В этой группе достигнут лимит фактов. Удалите один, чтобы добавить новый.';
+    return `В этой группе достигнут лимит фактов. Новый факт стоит ${EXTRA_FACT_RULE.tokens} токен(ов).`;
   }, [factsPerGroupLimit]);
   const sanitizeFactText = useCallback(
     (value: string, options?: { trimWhitespace?: boolean }) => {
@@ -232,9 +234,16 @@ useEffect(() => {
   );
 
   const handleAddGroup = () => {
+    let tokenInfo: string | null = null;
     if (!isUnlimited(factGroupLimit) && factGroupLimit !== null && groups.length >= factGroupLimit) {
-      setLimitNotice('Достигнут лимит групп фактов для текущего тарифа. Удалите одну из существующих или оформите InNet Pro.');
-      return;
+      const charge = spendTokensForAction('extra-fact-group');
+      if (!charge.ok) {
+        setLimitNotice(
+          `Нужно ${charge.cost} токенов, чтобы открыть новую группу фактов. На балансе ${charge.balance}. Пополните вкладку «Токены».`
+        );
+        return;
+      }
+      tokenInfo = `Списано ${charge.cost} токенов за новую группу. Остаток: ${charge.balance}.`;
     }
 
     let baseName = '';
@@ -259,14 +268,26 @@ useEffect(() => {
     saveFactGroups(updated);
     setErrors('');
     setNewGroupName('');
+    setLimitNotice(tokenInfo ?? null);
   };
 
   const handleAddFact = (groupId: string, text: string): string | null => {
     const targetGroup = groups.find((group) => group.id === groupId);
     if (!targetGroup) return null;
-    if (!isUnlimited(factsPerGroupLimit) && factsPerGroupLimit !== null && targetGroup.facts.length >= factsPerGroupLimit) {
-      setLimitNotice(factLimitMessage);
-      return null;
+    let tokenMessage: string | null = null;
+    if (
+      !isUnlimited(factsPerGroupLimit) &&
+      factsPerGroupLimit !== null &&
+      targetGroup.facts.length >= factsPerGroupLimit
+    ) {
+      const charge = spendTokensForAction('extra-fact');
+      if (!charge.ok) {
+        setLimitNotice(
+          `Нужны ${charge.cost} токена(ов), чтобы добавить факт сверх лимита. На балансе ${charge.balance}. Пополните вкладку «Токены».`
+        );
+        return null;
+      }
+      tokenMessage = `Списано ${charge.cost} токенов за новый факт. Остаток: ${charge.balance}.`;
     }
     const content = sanitizeFactText(text);
     if (!content) return null;
@@ -285,12 +306,13 @@ useEffect(() => {
 
     setGroups(updated);
     saveFactGroups(updated);
+    setLimitNotice(tokenMessage);
     return createdId;
   };
 
   const handleSyncToggle = async () => {
     if (!entitlements.allowSyncAcrossDevices) {
-      setSyncError('Синхронизация доступна в InNet Pro. Оформите подписку, чтобы подключить автоматическое обновление на всех устройствах.');
+      setSyncError('Синхронизация появится как отдельная покупка токенами. Пока функция отключена для тестирования.');
       return;
     }
     if (syncLoading) return;

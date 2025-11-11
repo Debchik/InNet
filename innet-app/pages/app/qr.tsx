@@ -2,11 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, RefObject } from 'react';
-import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import QRCode from 'react-qr-code';
 import Layout from '../../components/Layout';
-import OnboardingHint from '../../components/onboarding/OnboardingHint';
 import ToggleBar from '../../components/ToggleBar';
 import {
   FactGroup,
@@ -23,25 +21,19 @@ import {
   generateShareToken,
   getOrCreateProfileId,
   mergeContactFromShare,
-  parseShareToken,
   ShareGroup,
-  SharePayload,
-  SHARE_ALIAS_PREFIX,
   SHARE_PREFIX,
-  SHARE_VERSION,
   buildShareUrl,
-  extractShareToken,
 } from '../../lib/share';
-import { sendExchange, fetchPendingExchanges } from '../../lib/exchangeClient';
+import { fetchPendingExchanges } from '../../lib/exchangeClient';
 import { v4 as uuidv4 } from 'uuid';
 import { usePlan } from '../../hooks/usePlan';
 import { usePrivacy } from '../../hooks/usePrivacy';
 import { isUnlimited } from '../../lib/plans';
 import { ShareProfile, loadShareProfile, SHARE_PROFILE_STORAGE_KEYS } from '../../lib/shareProfile';
 import { groupToShare, syncSelection } from '../../lib/shareUtils';
-import { createShareAliasLink, resolveAliasToken } from '../../lib/shareAliasClient';
-
-const QRScanner = dynamic(() => import('../../components/QRScanner'), { ssr: false });
+import { createShareAliasLink } from '../../lib/shareAliasClient';
+import { spendTokensForAction } from '../../lib/tokens';
 
 const RESPONSE_OVERLAY_CLOSE_DELAY = 80;
 const EXCHANGE_POLL_INTERVAL = 5000;
@@ -53,6 +45,11 @@ type LinkState = {
   pending: boolean;
 };
 
+type ManualNotice = {
+  type: 'success' | 'error';
+  message: string;
+};
+
 export default function QRPage() {
   // Удаляем groupsExpanded, группы всегда видны полностью
   const router = useRouter();
@@ -60,18 +57,13 @@ export default function QRPage() {
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [profile, setProfile] = useState<ShareProfile>(loadShareProfile);
   const [profileId, setProfileId] = useState('');
-  const [mode, setMode] = useState<'generate' | 'scan'>('generate');
   const [isReady, setIsReady] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
-  const [scanError, setScanError] = useState<string | null>(null);
-  const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [responseOpen, setResponseOpen] = useState(false);
   const [responseSelection, setResponseSelection] = useState<string[]>([]);
   const [lastContactId, setLastContactId] = useState<string | null>(null);
-  const [shareNonce, setShareNonce] = useState(0);
-  const [responseNonce, setResponseNonce] = useState(0);
-  const [tokenInput, setTokenInput] = useState('');
   const [manualModalOpen, setManualModalOpen] = useState(false);
+  const [manualNotice, setManualNotice] = useState<ManualNotice | null>(null);
   const [incomingExchange, setIncomingExchange] = useState<{
     contactId: string;
     message: string;
@@ -90,14 +82,6 @@ export default function QRPage() {
   const { entitlements } = usePlan();
   const { level: privacyLevel } = usePrivacy(entitlements);
   const [contacts, setContacts] = useState(loadContacts());
-  const contactLimitMessage = useMemo(() => {
-    if (isUnlimited(entitlements.contactLimit)) return '';
-    const limit = entitlements.contactLimit ?? 0;
-    if (limit <= 0) {
-      return 'Лимит контактов для текущего тарифа исчерпан.';
-    }
-    return `В вашем тарифе доступно до ${limit} контактов первого круга. Удалите контакт или подключите InNet Pro для безлимита.`;
-  }, [entitlements.contactLimit]);
   const isContactLimitExceeded = useCallback(
     (remoteId?: string) => {
       if (isUnlimited(entitlements.contactLimit)) return false;
@@ -114,8 +98,6 @@ export default function QRPage() {
     [contacts, entitlements.contactLimit]
   );
 
-  const lastTokenRef = useRef<string>('');
-  const lastTokenTsRef = useRef<number>(0);
   const incomingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -187,34 +169,35 @@ export default function QRPage() {
     [privacyLevel, profile.instagram, profile.phone, profile.telegram]
   );
 
-  const sendReciprocalExchange = useCallback(
-    async (targetProfileId: string) => {
-      if (!profileId || !targetProfileId || profileId === targetProfileId) return;
-      if (shareGroups.length === 0) return;
-      const payload: SharePayload = {
-        v: SHARE_VERSION,
-        owner: {
-          id: profileId,
-          name: profile.name || 'Без имени',
-          avatar: profile.avatar,
-          phone: ownerContact.phone,
-          telegram: ownerContact.telegram,
-          instagram: ownerContact.instagram,
-        },
-        groups: shareGroups,
-        generatedAt: Date.now(),
-        privacy: privacyLevel,
-      };
+  const sharePayloadSignature = useMemo(() => {
+    const normalizedGroups = shareGroups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      color: group.color,
+      facts: group.facts.map((fact) => `${fact.id}:${fact.text}`),
+    }));
+    return JSON.stringify({
+      profileId,
+      name: profile.name ?? '',
+      avatar: profile.avatar ?? '',
+      phone: ownerContact.phone ?? '',
+      telegram: ownerContact.telegram ?? '',
+      instagram: ownerContact.instagram ?? '',
+      privacy: privacyLevel,
+      groups: normalizedGroups,
+    });
+  }, [
+    profileId,
+    profile.name,
+    profile.avatar,
+    ownerContact.phone,
+    ownerContact.telegram,
+    ownerContact.instagram,
+    privacyLevel,
+    shareGroups,
+  ]);
 
-      const response = await sendExchange(profileId, targetProfileId, payload);
-      if (!response.ok) {
-        setExchangeError(response.message);
-        return;
-      }
-      setExchangeError(null);
-    },
-    [profileId, profile, shareGroups, ownerContact, privacyLevel]
-  );
+  const shareGeneratedAt = useMemo(() => Date.now(), [sharePayloadSignature]);
 
   const shareTokenInfo = useMemo(() => {
     if (!profileId) return { token: SHARE_PREFIX, error: null as string | null };
@@ -230,7 +213,7 @@ export default function QRPage() {
           instagram: ownerContact.instagram,
         },
         groups: shareGroups,
-        generatedAt: Date.now() + shareNonce,
+        generatedAt: shareGeneratedAt,
         privacy: privacyLevel,
       });
       return { token, error: null as string | null };
@@ -238,7 +221,7 @@ export default function QRPage() {
       const message = err instanceof Error ? err.message : 'Не удалось создать QR-код.';
       return { token: SHARE_PREFIX, error: message };
     }
-  }, [profileId, profile, shareGroups, shareNonce, ownerContact, privacyLevel]);
+  }, [profileId, profile, shareGroups, ownerContact, privacyLevel, shareGeneratedAt]);
 
   useEffect(() => {
     if (!shareTokenInfo.token || shareTokenInfo.token === SHARE_PREFIX) {
@@ -291,6 +274,36 @@ export default function QRPage() {
       .map(groupToShare);
   }, [groups, responseSelection]);
 
+  const responsePayloadSignature = useMemo(() => {
+    const normalizedGroups = responseGroups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      color: group.color,
+      facts: group.facts.map((fact) => `${fact.id}:${fact.text}`),
+    }));
+    return JSON.stringify({
+      profileId,
+      active: responseOpen,
+      name: profile.name ?? '',
+      avatar: profile.avatar ?? '',
+      phone: profile.phone ?? '',
+      telegram: profile.telegram ?? '',
+      instagram: profile.instagram ?? '',
+      groups: normalizedGroups,
+    });
+  }, [
+    profileId,
+    profile.name,
+    profile.avatar,
+    profile.phone,
+    profile.telegram,
+    profile.instagram,
+    responseGroups,
+    responseOpen,
+  ]);
+
+  const responseGeneratedAt = useMemo(() => Date.now(), [responsePayloadSignature]);
+
   const responseToken = useMemo(() => {
     if (!responseOpen || !profileId) return '';
     try {
@@ -305,12 +318,12 @@ export default function QRPage() {
           instagram: profile.instagram,
         },
         groups: responseGroups,
-        generatedAt: Date.now() + responseNonce,
+        generatedAt: responseGeneratedAt,
       });
     } catch {
       return '';
     }
-  }, [profileId, profile, responseGroups, responseNonce, responseOpen]);
+  }, [profileId, profile, responseGroups, responseGeneratedAt, responseOpen]);
 
   useEffect(() => {
     if (!responseToken || !responseOpen) {
@@ -365,7 +378,7 @@ export default function QRPage() {
   }, [incomingExchange]);
 
   useEffect(() => {
-    if (!profileId || mode !== 'generate') return;
+    if (!profileId) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let fetching = false;
@@ -382,10 +395,17 @@ export default function QRPage() {
           if (result.exchanges.length > 0) {
             for (const exchange of result.exchanges) {
               try {
+                let tokenMessage: string | null = null;
                 if (isContactLimitExceeded(exchange.payload.owner?.id)) {
-                  setExchangeError(contactLimitMessage);
-                  limitBlocked = true;
-                  continue;
+                  const charge = spendTokensForAction('extra-contact');
+                  if (!charge.ok) {
+                    setExchangeError(
+                      `Недостаточно токенов, чтобы добавить новый контакт. Нужно ${charge.cost}, на балансе ${charge.balance}.`
+                    );
+                    limitBlocked = true;
+                    continue;
+                  }
+                  tokenMessage = `Списано ${charge.cost} токенов. Остаток: ${charge.balance}.`;
                 }
                 const outcome = mergeContactFromShare(exchange.payload);
                 setContacts(loadContacts());
@@ -395,7 +415,8 @@ export default function QRPage() {
                   : outcome.addedFacts > 0
                     ? `Контакт «${outcome.contact.name}» обновлён: добавлено ${outcome.addedFacts} фактов.`
                     : `Контакт «${outcome.contact.name}» уже есть в списке.`;
-                setIncomingExchange({ contactId: outcome.contact.id, message });
+                const combinedMessage = tokenMessage ? `${tokenMessage} ${message}` : message;
+                setIncomingExchange({ contactId: outcome.contact.id, message: combinedMessage });
               } catch (err) {
                 console.error('[qr] Failed to merge incoming exchange', err);
               }
@@ -433,165 +454,7 @@ export default function QRPage() {
         clearTimeout(timer);
       }
     };
-  }, [
-    profileId,
-    mode,
-    shareTokenInfo.token,
-    isContactLimitExceeded,
-    contactLimitMessage,
-  ]);
-
-  const processScan = useCallback(
-    async (rawValue: string): Promise<boolean> => {
-      if (!rawValue) {
-        setScanError('Не удалось распознать ссылку обмена.');
-        setScanMessage(null);
-        return false;
-      }
-      const trimmedValue = rawValue.trim();
-      if (!trimmedValue) {
-        setScanError('Не удалось распознать ссылку обмена.');
-        setScanMessage(null);
-        return false;
-      }
-      const extracted = extractShareToken(trimmedValue) ?? trimmedValue;
-      if (
-        !extracted ||
-        (!extracted.startsWith(SHARE_PREFIX) && !extracted.startsWith(SHARE_ALIAS_PREFIX))
-      ) {
-        setScanError('Не удалось распознать ссылку обмена.');
-        setScanMessage(null);
-        return false;
-      }
-
-      const now = Date.now();
-      if (lastTokenRef.current === extracted && now - lastTokenTsRef.current < 1500) {
-        return false;
-      }
-      lastTokenRef.current = extracted;
-      lastTokenTsRef.current = now;
-
-      let token = extracted;
-      if (token.startsWith(SHARE_ALIAS_PREFIX)) {
-        try {
-          token = await resolveAliasToken(token);
-        } catch (err) {
-          const message =
-            err instanceof Error ? err.message : 'Не удалось расшифровать короткую ссылку.';
-          setScanError(message);
-          setScanMessage(null);
-          return false;
-        }
-      }
-
-      if (!token.startsWith(SHARE_PREFIX)) {
-        setScanError('Не удалось распознать ссылку обмена.');
-        setScanMessage(null);
-        return false;
-      }
-
-      let payload: SharePayload;
-      try {
-        payload = parseShareToken(token);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Не удалось прочитать QR-код.';
-        setScanError(message);
-        setScanMessage(null);
-        return false;
-      }
-
-      if (payload?.owner?.id && payload.owner.id === profileId) {
-        setScanError('Эй, эгоист! Сам себя в друзья не записывай 😅');
-        setScanMessage(null);
-        return false;
-      }
-      if (isContactLimitExceeded(payload?.owner?.id)) {
-        setScanError(contactLimitMessage);
-        setScanMessage(null);
-        return false;
-      }
-      const { contact, wasCreated, addedFacts } = mergeContactFromShare(payload);
-      setContacts(loadContacts());
-      setLastContactId(contact.id);
-      setScanError(null);
-      void sendReciprocalExchange(payload.owner.id);
-
-      if (wasCreated) {
-        setScanMessage(`Контакт «${contact.name}» добавлен.`);
-        setResponseOpen(false);
-        setTimeout(() => {
-          router.push(`/app/contacts/${contact.id}`);
-        }, RESPONSE_OVERLAY_CLOSE_DELAY);
-      } else {
-        if (addedFacts > 0) {
-          setScanMessage(`Контакт «${contact.name}» обновлён: добавлено ${addedFacts} фактов.`);
-        } else {
-          setScanMessage(`Контакт «${contact.name}» уже есть, новых фактов нет.`);
-        }
-        router.push(`/app/contacts/${contact.id}`);
-      }
-
-      return true;
-    },
-    [
-      contactLimitMessage,
-      isContactLimitExceeded,
-      profileId,
-      router,
-      sendReciprocalExchange,
-    ]
-  );
-
-  const handleTokenSubmit = async (rawInput?: string) => {
-    if (typeof window === 'undefined') return;
-    try {
-      setScanError(null);
-      setScanMessage(null);
-      let source = rawInput;
-      if (source != null) {
-        source = source.trim();
-        if (!source) {
-          setScanError('Введите ссылку или токен для обмена.');
-          setScanMessage(null);
-          return;
-        }
-      } else {
-        if (!navigator.clipboard) {
-          setScanError('Буфер обмена недоступен. Вставьте ссылку вручную.');
-          setScanMessage(null);
-          return;
-        }
-        source = (await navigator.clipboard.readText()).trim();
-        if (!source) {
-          setScanError('Буфер обмена пуст. Скопируйте ссылку и попробуйте снова.');
-          setScanMessage(null);
-          return;
-        }
-      }
-
-      const handled = await processScan(source);
-      if (handled && rawInput != null) {
-        setTokenInput('');
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Не удалось обработать ссылку.';
-      setScanError(message);
-    }
-  };
-
-  const handleScan = useCallback(
-    (decoded: string) => {
-      void processScan(decoded);
-    },
-    [processScan]
-  );
-
-  const handleScanError = (error: unknown) => {
-    if (!error) return;
-    const message = error instanceof Error ? error.message : String(error);
-    setScanError(message);
-    setScanMessage(null);
-  };
+  }, [profileId, shareTokenInfo.token, isContactLimitExceeded]);
 
   const handleGroupToggle = (id: string) => {
     setSelectedGroups((prev) =>
@@ -603,7 +466,6 @@ export default function QRPage() {
     setResponseSelection((prev) =>
       prev.includes(id) ? prev.filter((gid) => gid !== id) : [...prev, id]
     );
-    setResponseNonce(Date.now());
   };
 
   const closeResponseModal = () => {
@@ -617,10 +479,17 @@ export default function QRPage() {
 
   const handleManualContactCreate = useCallback(
     (payload: ManualContactPayload) => {
+      let tokenMessage: string | null = null;
       if (isContactLimitExceeded()) {
-        setScanError(contactLimitMessage);
-        setScanMessage(null);
-        return;
+        const charge = spendTokensForAction('extra-contact');
+        if (!charge.ok) {
+          setManualNotice({
+            type: 'error',
+            message: `Нужны ${charge.cost} токена(ов), на балансе ${charge.balance}. Пополните баланс во вкладке «Токены».`,
+          });
+          return;
+        }
+        tokenMessage = `Списано ${charge.cost} токенов. Остаток: ${charge.balance}.`;
       }
       const trimmedName = payload.name.trim() || 'Без имени';
       const storedContacts = loadContacts();
@@ -641,10 +510,14 @@ export default function QRPage() {
       saveContacts([baseContact, ...storedContacts]);
       setContacts(loadContacts());
       setManualModalOpen(false);
-      setScanError(null);
-      setScanMessage(`Контакт «${baseContact.name}» добавлен вручную.`);
+      setManualNotice({
+        type: 'success',
+        message: tokenMessage
+          ? `${tokenMessage} Контакт «${baseContact.name}» добавлен вручную.`
+          : `Контакт «${baseContact.name}» добавлен вручную.`,
+      });
     },
-    [contactLimitMessage, isContactLimitExceeded]
+    [isContactLimitExceeded]
   );
 
   if (!isReady) {
@@ -660,182 +533,140 @@ export default function QRPage() {
   return (
     <Layout>
       <div className="mx-auto w-full max-w-4xl px-4 py-8">
-        <OnboardingHint
-          id="qr"
-          title="Обмен через QR — сердце InNet"
-          description="Выберите, какими группами фактов делиться, покажите код — ваш собеседник мгновенно сохранит профиль. Принимаете код другого? Переключитесь на «Сканировать»."
-          bullets={[
-            'Кнопка «Добавить контакт» создаёт запись вручную — пригодится на офлайн-встречах.',
-            'При режиме «Сгенерировать» выбирайте группы фактов сверху, чтобы не делиться лишним.',
-            'Синхронизация и приватность контактов зависят от выбранного тарифа.',
-          ]}
-          className="mb-6"
-        />
-        <h1 className="text-3xl font-bold text-slate-100">QR-коды</h1>
-        <div className="mt-1 flex flex-col gap-3 text-sm text-slate-400 md:flex-row md:items-center md:justify-between">
+        <h1 className="text-3xl font-bold text-slate-100">Мой QR</h1>
+        <div className="mt-1 text-sm text-slate-400">
           <p>
             Покажите код с фактами друзьям или отсканируйте их, чтобы сохранить у себя. Все данные
             остаются на вашем устройстве.
           </p>
-          <button
-            type="button"
-            onClick={() => setManualModalOpen(true)}
-            className="inline-flex items-center justify-center rounded-full bg-primary px-4 py-2 text-sm font-semibold text-background transition hover:bg-secondary"
-          >
-            Добавить контакт
-          </button>
         </div>
 
-        <div className="mt-6 flex justify-center gap-3">
-          <ModeButton active={mode === 'generate'} onClick={() => { setMode('generate'); setShareNonce(Date.now()); }}>
-            Сгенерировать
-          </ModeButton>
-          <ModeButton active={mode === 'scan'} onClick={() => setMode('scan')}>
-            Сканировать
-          </ModeButton>
-        </div>
-
-        {mode === 'generate' ? (
-          <section className="mx-auto mt-6 flex w-full max-w-lg flex-col items-center gap-6 rounded-2xl bg-gray-800 px-6 py-8 shadow-lg">
-            {/* <ProfileSummary profile={profile} /> */}
-            <div className="rounded-[28px] border border-cyan-500/20 bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-slate-800/60 p-6 shadow-[0_35px_80px_rgba(8,145,178,0.35)] backdrop-blur-xl">
-              {shareError ? (
-                <p className="max-w-xs text-center text-sm text-red-400">{shareError}</p>
-              ) : (
+        <section className="mx-auto mt-6 flex w-full max-w-lg flex-col items-center gap-6 rounded-2xl bg-gray-800 px-6 py-8 shadow-lg">
+          {/* <ProfileSummary profile={profile} /> */}
+          <div className="rounded-[28px] border border-cyan-500/20 bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-slate-800/60 p-6 shadow-[0_35px_80px_rgba(8,145,178,0.35)] backdrop-blur-xl">
+            {shareError ? (
+              <p className="max-w-xs text-center text-sm text-red-400">{shareError}</p>
+            ) : (
+              <div
+                className="relative rounded-2xl bg-slate-950/40 p-4 shadow-inner"
+                aria-busy={shareLinkState.pending}
+              >
                 <div
-                  className="relative rounded-2xl bg-slate-950/40 p-4 shadow-inner"
-                  aria-busy={shareLinkState.pending}
+                  className={`transition duration-200 ${
+                    shareLinkState.pending ? 'blur-sm opacity-70' : ''
+                  }`}
                 >
-                  <div
-                    className={`transition duration-200 ${
-                      shareLinkState.pending ? 'blur-sm opacity-70' : ''
-                    }`}
-                  >
-                    <QRCode
-                      value={shareLinkState.link || SHARE_PREFIX}
-                      fgColor="#80F2E3"
-                      bgColor="transparent"
-                      level="L"
-                      style={{
-                        width: 'min(80vw, 320px)',
-                        height: 'min(80vw, 320px)',
-                        filter: 'drop-shadow(0 20px 40px rgba(8,145,178,0.35))',
-                      }}
-                    />
-                  </div>
-                  {shareLinkState.pending && (
-                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs font-semibold uppercase tracking-wide text-cyan-200">
-                      Готовим QR...
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {incomingExchange && (
-              <div className="w-full rounded-xl border border-primary/40 bg-primary/10 px-4 py-3 text-sm text-primary">
-                <p>{incomingExchange.message}</p>
-                <div className="mt-3 flex gap-3">
-                  <button
-                    type="button"
-                    className="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-slate-900 transition hover:bg-secondary"
-                    onClick={() => {
-                      router.push(`/app/contacts/${incomingExchange.contactId}`);
-                      setIncomingExchange(null);
+                  <QRCode
+                    value={shareLinkState.link || SHARE_PREFIX}
+                    fgColor="#80F2E3"
+                    bgColor="transparent"
+                    level="L"
+                    style={{
+                      width: 'min(80vw, 320px)',
+                      height: 'min(80vw, 320px)',
+                      filter: 'drop-shadow(0 20px 40px rgba(8,145,178,0.35))',
                     }}
-                  >
-                    Открыть контакт
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary transition hover:bg-primary/20"
-                    onClick={() => setIncomingExchange(null)}
-                  >
-                    Скрыть
-                  </button>
+                  />
                 </div>
-              </div>
-            )}
-
-            {exchangeError && (
-              <div className="w-full rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-                {exchangeError}
-              </div>
-            )}
-
-            <div className="w-full space-y-3">
-              <h2 className="text-center text-lg font-semibold text-slate-100">
-                Чем вы хотите поделиться
-              </h2>
-              <ul className="space-y-3">
-                {groups.length === 0 && (
-                  <li className="rounded-xl border border-dashed border-slate-700 px-4 py-5 text-center text-sm text-slate-400">
-                    У вас пока нет групп фактов. Добавьте их в разделе «Мои факты».
-                  </li>
+                {shareLinkState.pending && (
+                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs font-semibold uppercase tracking-wide text-cyan-200">
+                    Готовим QR...
+                  </div>
                 )}
-                {groups.map((group) => {
-                  const active = selectedGroups.includes(group.id);
-                  return (
-                    <li
-                      key={group.id}
-                      className="flex items-center justify-between rounded-xl bg-gray-900/70 px-4 py-3"
-                    >
-                      <div>
-                        <p className="font-medium text-slate-100" style={{ color: active ? group.color : undefined }}>
-                          {group.name}
-                        </p>
-                        <p className="text-xs text-slate-400">Фактов: {group.facts.length}</p>
-                      </div>
-                      <ToggleBar
-                        active={active}
-                        onToggle={() => handleGroupToggle(group.id)}
-                        accentColor={group.color}
-                      />
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          </section>
-        ) : (
-          <section className="mx-auto mt-6 flex w-full max-w-lg flex-col items-center gap-4 rounded-2xl bg-gray-800 px-6 py-8 shadow-lg">
-            <QRScanner onScan={(value) => { void handleScan(value); }} onError={handleScanError} />
-            {scanError && (
-              <p className="text-center text-sm text-red-400 max-w-xs">{scanError}</p>
+              </div>
             )}
-            {scanMessage && !scanError && (
-              <p className="text-center text-sm text-green-400 max-w-xs">{scanMessage}</p>
-            )}
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void handleTokenSubmit(tokenInput);
-              }}
-              className="w-full space-y-2 rounded-xl border border-slate-700 bg-slate-900/40 p-4"
-            >
-              <label className="block text-xs text-slate-400">
-                Если QR не считывается, вставьте ссылку вручную
-              </label>
-              <input
-                type="text"
-                value={tokenInput}
-                onChange={(event) => setTokenInput(event.target.value)}
-                placeholder="https://innet.app/share?..."
-                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/40"
-              />
-              <div className="flex justify-end">
+          </div>
+
+          {incomingExchange && (
+            <div className="w-full rounded-xl border border-primary/40 bg-primary/10 px-4 py-3 text-sm text-primary">
+              <p>{incomingExchange.message}</p>
+              <div className="mt-3 flex gap-3">
                 <button
-                  type="submit"
-                  className="rounded-full bg-primary px-4 py-2 text-xs font-semibold text-slate-950 transition hover:bg-secondary"
+                  type="button"
+                  className="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-slate-900 transition hover:bg-secondary"
+                  onClick={() => {
+                    router.push(`/app/contacts/${incomingExchange.contactId}`);
+                    setIncomingExchange(null);
+                  }}
                 >
-                  Сканировать ссылку
+                  Открыть контакт
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary transition hover:bg-primary/20"
+                  onClick={() => setIncomingExchange(null)}
+                >
+                  Скрыть
                 </button>
               </div>
-            </form>
-          </section>
-        )}
+            </div>
+          )}
 
-        <section className="mx-auto mt-8 rounded-2xl bg-gray-800 px-6 py-5 text-sm text-slate-300 shadow">
+          {exchangeError && (
+            <div className="w-full rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+              {exchangeError}
+            </div>
+          )}
+
+          <div className="w-full space-y-3">
+            <h2 className="text-center text-lg font-semibold text-slate-100">
+              Чем вы хотите поделиться
+            </h2>
+            <ul className="space-y-3">
+              {groups.length === 0 && (
+                <li className="rounded-xl border border-dashed border-slate-700 px-4 py-5 text-center text-sm text-slate-400">
+                  У вас пока нет групп фактов. Добавьте их в разделе «Мои факты».
+                </li>
+              )}
+              {groups.map((group) => {
+                const active = selectedGroups.includes(group.id);
+                return (
+                  <li
+                    key={group.id}
+                    className="flex items-center justify-between rounded-xl bg-gray-900/70 px-4 py-3"
+                  >
+                    <div>
+                      <p className="font-medium text-slate-100" style={{ color: active ? group.color : undefined }}>
+                        {group.name}
+                      </p>
+                      <p className="text-xs text-slate-400">Фактов: {group.facts.length}</p>
+                    </div>
+                    <ToggleBar
+                      active={active}
+                      onToggle={() => handleGroupToggle(group.id)}
+                      accentColor={group.color}
+                    />
+                  </li>
+                );
+              })}
+            </ul>
+            {manualNotice && (
+              <div
+                className={`rounded-xl border px-4 py-3 text-sm ${
+                  manualNotice.type === 'success'
+                    ? 'border-primary/40 bg-primary/10 text-primary'
+                    : 'border-red-500/40 bg-red-500/10 text-red-400'
+                }`}
+              >
+                {manualNotice.message}
+              </div>
+            )}
+            <div className="flex justify-center pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setManualNotice(null);
+                  setManualModalOpen(true);
+                }}
+                className="inline-flex items-center justify-center rounded-full bg-primary px-4 py-2 text-sm font-semibold text-background transition hover:bg-secondary"
+              >
+                Добавить контакт вручную
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section id="qr-tutorial" className="mx-auto mt-8 rounded-2xl bg-gray-800 px-6 py-5 text-sm text-slate-300 shadow">
           <h2 className="text-lg font-semibold text-slate-100">Как проходит обмен</h2>
           <ol className="mt-3 list-decimal space-y-2 pl-5">
             <li>Выберите группы, покажите QR-код собеседнику.</li>
@@ -848,6 +679,14 @@ export default function QRPage() {
           </p>
         </section>
       </div>
+
+      <a
+        href="#qr-tutorial"
+        className="fixed bottom-6 right-6 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-background text-xl font-semibold shadow-lg transition hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+        aria-label="Перейти к туториалу"
+      >
+        ?
+      </a>
 
       {responseOpen && (
         <ResponseModal
@@ -868,27 +707,6 @@ export default function QRPage() {
         />
       )}
     </Layout>
-  );
-}
-
-function ModeButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`rounded-full px-4 py-2 text-sm transition-colors ${
-        active ? 'bg-primary text-background' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-      }`}
-    >
-      {children}
-    </button>
   );
 }
 

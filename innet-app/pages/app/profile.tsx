@@ -827,7 +827,7 @@ const persistAvatar = useCallback(
                       <p className="mt-1 text-xs text-gray-400">{meta.description}</p>
                       {!allowed && (
                         <span className="mt-3 inline-flex rounded-full bg-primary/20 px-3 py-1 text-xs font-semibold text-primary">
-                          Доступно в InNet Pro
+                          Скоро за токены
                         </span>
                       )}
                       {selected && (

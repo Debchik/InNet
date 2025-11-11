@@ -24,12 +24,12 @@ type ErrorResponse = {
 
 const PLAN_CATALOG: Record<PlanProduct, { amount: number; description: string }> = {
   'pro-monthly': {
-    amount: 299,
-    description: 'Подписка InNet Pro — месяц',
+    amount: 190,
+    description: 'Пакет токенов «Стартовый 40»',
   },
   'pro-annual': {
-    amount: 1990,
-    description: 'Подписка InNet Pro — год',
+    amount: 1190,
+    description: 'Пакет токенов «Агент влияния 360»',
   },
 };
 
@@ -65,7 +65,7 @@ export default async function handler(
       email: body.email,
       metadata: {
         planId,
-        trialDays: planId === 'pro-monthly' ? '30' : '0',
+        trialDays: '0',
       },
     });
 

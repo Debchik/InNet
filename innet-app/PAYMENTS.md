@@ -1,52 +1,50 @@
-# YooKassa integration
+# YooKassa integration (token packs)
 
-The application integrates with YooKassa to handle upgrades to the **InNet Pro** subscription tier.
-This document outlines the required configuration and high-level flow.
+InNet перешёл на модель pay-as-you-go: 20 контактов и базовые факты бесплатны, всё сверх оплачивается
+токенами. Этот документ описывает, как будет работать покупка пакетов токенов через YooKassa и какие
+заглушки сейчас используются на фронтенде.
 
-## Required environment variables
+## Что уже реализовано
 
-Set the following variables for the Next.js runtime (API routes and custom server):
+- На странице `/app/upgrade` пользователь выбирает пакет токенов. При клике вызывается
+  `simulateTokenPurchase(packId)` — функция имитирует платёж и просто пополняет баланс в `localStorage`.
+- Стоимость действий зашита в `lib/tokens.ts` (`TOKEN_ACTIONS_LIST`). Эти значения показываются на лендинге,
+  в оферте и в самом кошельке.
+- Лимиты бесплатного плана берутся из `PLAN_ENTITLEMENTS.free`.
 
-- `YOOKASSA_SHOP_ID` – the shop ID provided by YooKassa.
-- `YOOKASSA_SECRET_KEY` – the secret key associated with the shop.
+## Планируемая интеграция с YooKassa
 
-Optionally set `NEXT_PUBLIC_SITE_URL` so that payment return URLs point at the correct public origin.
-If it is omitted, the API falls back to `http://localhost:3000` in development.
+1. Клиент отправляет `POST /api/payments/create` с идентификатором пакета (`starter-40`, `networker-120`, и т. д.).
+2. Сервер создаёт платёж в YooKassa и возвращает `paymentId` + `confirmationUrl`.
+3. После подтверждения оплаты серверный вебхук (`/api/payments/webhook`) начисляет токены:
+   - Находит пользователя по `metadata.userId`.
+   - Добавляет `pack.tokens + pack.bonusTokens` к балансу в Supabase.
+   - Возвращает статус `succeeded`, чтобы фронтенд обновил локальный кэш.
+4. Клиент опрашивает `/api/payments/status?paymentId=...` до тех пор, пока вебхук не подтвердит зачисление.
 
-## Payment flow overview
+## Переменные окружения
 
-1. The client calls `POST /api/payments/create` with the desired plan (`pro-monthly` or `pro-annual`).
-   The server creates a payment in YooKassa and returns the confirmation URL.
-2. The user is redirected to the YooKassa checkout page to complete the payment.
-3. YooKassa sends webhooks to `POST /api/payments/webhook` when the payment status changes.
-4. After a successful payment the webhook updates the user account in Supabase:
-   - `plan` is set to `pro`.
-   - `planActivatedAt` is refreshed.
-   - Additional metadata (`planProduct`, `planExpiresAt`) is stored in the JSON payload of the row.
-5. The browser polls `GET /api/payments/status` until the webhook confirms success, then updates the
-   local subscription cache so Pro features unlock immediately.
+| Переменная              | Значение                                                    |
+|------------------------|-------------------------------------------------------------|
+| `YOOKASSA_SHOP_ID`     | Идентификатор магазина                                      |
+| `YOOKASSA_SECRET_KEY`  | Секретный ключ для подписи запросов и проверки вебхуков     |
+| `NEXT_PUBLIC_SITE_URL` | Базовый URL (используется в `return_url` при оплате пакета) |
 
-## Webhook configuration
+## Важные детали синхронизации
 
-Configure the YooKassa webhook endpoint to point at:
+- Баланс токенов пока хранится только локально. После подключения YooKassa данные нужно синхронизировать
+  с Supabase (`profile.tokens`). При ошибке синхронизации фронтенд должен показать уведомление и предложить
+  повторить попытку.
+- Вебхук обязан проверять сумму платежа против ожидаемой цены пакета, иначе пользователь сможет подменить
+  стоимость.
+- При возврате средств надо списывать токены в обратном порядке (например, возвращаем `networker-120` —
+  уменьшаем баланс на 132 токена и помечаем операцию в журнале).
 
-```
-https://<your-domain>/api/payments/webhook
-```
+## Тестовый режим
 
-The webhook accepts either
+Пока YooKassa не подключена, ничего делать не нужно — заглушка `simulateTokenPurchase` уже позволяет тестировать
+экономику и UX. Перед релизом:
 
-- HTTP Basic authentication (`<shopId>:<secretKey>`) — доступно в некоторых версиях кабинета; или
-- заголовок `Content-HMAC`, который ЮKassa добавляет автоматически.
-
-Если Basic в интерфейсе не предлагается, просто сохраните вебхук — подпись `Content-HMAC` уже есть,
-и приложение будет сверять её с вашим `YOOKASSA_SECRET_KEY`.
-
-Ensure the webhook is allowed to send the `payment.succeeded` and `payment.canceled` events.
-
-## Local testing tips
-
-- During development the API stores temporary payment metadata in memory. If the Next.js server
-  restarts, existing payment IDs are forgotten, so webhook callbacks cannot be matched.
-- You can simulate a successful payment by crafting a request to `/api/payments/webhook` with a
-  known `paymentId` and `metadata` payload that matches the values returned by `/api/payments/create`.
+1. Реализуйте настоящие API-роуты `/api/payments/create|status|webhook`.
+2. Замените вызов `simulateTokenPurchase` в `pages/app/upgrade.tsx` на реальный `startPayment`.
+3. Убедитесь, что `TOKEN_PACKS` в `lib/tokens.ts` соответствует ценам в YooKassa.

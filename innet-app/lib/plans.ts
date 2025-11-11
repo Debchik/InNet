@@ -26,7 +26,7 @@ const unlimited = null;
 
 export const PLAN_ENTITLEMENTS: Record<PlanId, PlanEntitlements> = {
   free: {
-    contactLimit: 40,
+    contactLimit: 20,
     factGroupLimit: 3,
     factsPerGroupLimit: 5,
     factLengthLimit: 128,
@@ -57,8 +57,8 @@ export const PLAN_CATALOG: Record<PlanId, PlanMeta> = {
   },
   pro: {
     id: 'pro',
-    label: 'InNet Pro',
-    description: 'Подписка с полным функционалом',
+    label: 'Legacy Unlock',
+    description: 'Исторический план для обратной совместимости',
   },
 };
 
